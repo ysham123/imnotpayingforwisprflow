@@ -1,0 +1,88 @@
+<!doctype html><meta charset="utf-8">
+<style>body{font:16px system-ui;padding:14px}label{display:block;margin-top:10px}input,textarea,[contenteditable]{display:block;width:690px;min-height:32px;border:1px solid #555;padding:7px}textarea{height:44px}[contenteditable]{white-space:pre-wrap}</style>
+<h2>Synthetic editors. Nothing is submitted.</h2>
+<label>Input<input id="input"></label>
+<label>Textarea<textarea id="textarea"></textarea></label>
+<label>ARIA contenteditable<div id="rich" role="textbox" aria-multiline="true" contenteditable="true"></div></label>
+<label>Plain contenteditable<div id="plain" contenteditable="true"></div></label>
+<label>Generic group editor<div id="generic" role="group" aria-label="Synthetic generic editor" contenteditable="true"></div></label>
+<label>Nested inline spans<div id="nested" role="textbox" contenteditable="true"></div></label>
+<label>Delayed DOM update<div id="delayedDOM" role="textbox" contenteditable="true"></div></label>
+<label>Delayed native clipboard read<div id="delayedRead" role="textbox" contenteditable="true"></div></label>
+<label>Readonly<input id="readonly" readonly></label>
+<label>Readonly ARIA textbox<div id="readonlyTextbox" role="textbox" aria-readonly="true" contenteditable="false" tabindex="0"></div></label>
+<label>Password<input id="password" type="password"></label>
+<script>
+(() => {
+  const ids = ['input','textarea','rich','plain','generic','nested','delayedDOM','delayedRead','readonly','readonlyTextbox','password'];
+  const counts = Object.fromEntries(ids.map(id => [id, 0]));
+  const value = el => el.matches('input,textarea') ? el.value : el.innerText.replace(/\u00a0/g, ' ');
+  function point(el, offset) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node, last;
+    while (node = walker.nextNode()) {
+      last = node;
+      if (offset <= node.length) return [node, offset];
+      offset -= node.length;
+    }
+    return last ? [last, last.length] : [el, 0];
+  }
+  function select(el, location, length) {
+    if (el.matches('input,textarea')) { el.setSelectionRange(location, location + length); return; }
+    const start = point(el, location), end = point(el, location + length);
+    const range = document.createRange(); range.setStart(...start); range.setEnd(...end);
+    const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  }
+  function insertText(el, text) {
+    if (el.matches('input,textarea')) {
+      const start = el.selectionStart, end = el.selectionEnd;
+      el.setRangeText(text, start, end, 'end');
+    } else {
+      const selection = getSelection();
+      if (!selection.rangeCount || !el.contains(selection.anchorNode)) return;
+      const range = selection.getRangeAt(0); range.deleteContents();
+      const node = document.createTextNode(text); range.insertNode(node);
+      range.setStartAfter(node); range.collapse(true);
+      selection.removeAllRanges(); selection.addRange(range);
+    }
+    el.dispatchEvent(new InputEvent('input', {bubbles:true,inputType:'insertFromPaste',data:text}));
+  }
+  document.addEventListener('paste', event => {
+    const el = event.target.closest('input,textarea,[contenteditable]');
+    if (!el || !(el.id in counts)) return;
+    counts[el.id]++;
+    if (el.id === 'delayedDOM') {
+      event.preventDefault();
+      const text = event.clipboardData.getData('text/plain');
+      setTimeout(() => insertText(el, text), 1600);
+    }
+  });
+  window.fixture = {
+    command(command) {
+      if (command.field) {
+        const el = document.getElementById(command.field);
+        if (!el) throw new Error('Unknown synthetic field');
+        if ('value' in command) {
+          if (el.matches('input,textarea')) el.value = command.value;
+          else if (command.field === 'nested') {
+            el.replaceChildren();
+            const text = command.value, split = command.split || 5;
+            el.append(document.createTextNode(text.slice(0, split)));
+            const strong = document.createElement('strong'); strong.textContent = text.slice(split, split + 5); el.append(strong);
+            const span = document.createElement('span'); span.textContent = text.slice(split + 5); el.append(span);
+          } else el.textContent = command.value;
+          counts[command.field] = 0;
+        }
+        if (command.focus) el.focus();
+        if ('location' in command && command.field !== 'password') select(el, command.location, command.length || 0);
+      }
+      return {values:Object.fromEntries(ids.map(id => [id,value(document.getElementById(id))])),
+              pasteCounts:{...counts},active:document.activeElement.id};
+    },
+    deferredInsert({text}) {
+      const el = document.getElementById('delayedRead'); counts.delayedRead++;
+      insertText(el,text);
+    }
+  };
+})();
+</script>

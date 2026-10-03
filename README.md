@@ -56,7 +56,7 @@ Download the installer from the pinned release, then run it:
 
 ```bash
 curl --fail --location \
-  https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v1.1.0/install.sh \
+  https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v1.1.1/install.sh \
   --output /tmp/local-dictation-install.sh
 
 # Optional: inspect the script before running it.
@@ -162,7 +162,9 @@ The menu includes **Cancel dictation**, **Copy last result**, and **Retry local 
 | Installation is interrupted | Rerun the installer. Partial downloads in its versioned cache can resume. |
 | Signature verification reports “resource fork” or Finder metadata | Install into the default local Applications folder. iCloud or other synced destinations can add metadata that invalidates the bundle. |
 
-The creator has confirmed the Fn workflow in Google search and the desktop chat application used during testing. Native integration tests cover cursor placement, selected text, clipboard recovery, and protected controls. **Compatibility varies by editor**; opaque fields use copy recovery. Terminal panes are not validated, and multiline terminal paste can execute commands depending on terminal settings.
+The creator has confirmed the Fn workflow in Google search and, with version 1.1.1, in both Claude and ChatGPT desktop text boxes. The patch passes 41 insertion checks across native AppKit, WKWebView, and Electron fixtures, including rich editors, delayed clipboard reads, and protected controls. Compatibility varies by app and editor; see the [validation record](docs/VALIDATION.md) for tested versions and limits. Opaque fields use copy recovery. Terminal panes are not validated, and multiline terminal paste can execute commands depending on terminal settings.
+
+Rich editors can update their accessibility text after the paste has already appeared. The app observes the original editor for up to 2.5 seconds and keeps the staged clipboard available during that window. If it still cannot confirm insertion, it reports **Paste sent** and keeps **Copy last result** available. An unchanged accessibility value does not prove that paste failed; check the visible field before inserting the result again.
 
 Current limits:
 

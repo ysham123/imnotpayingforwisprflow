@@ -59,13 +59,19 @@ python3 Tests/InstallerSmoke.py
 
 The shell scripts compile small assertion-based executables directly with `swiftc`, so they also work with Command Line Tools installations without XCTest. With full Xcode, `swift test` additionally runs the package's core XCTest target.
 
-The insertion fixture requires an interactive desktop and Accessibility permission for its test process:
+Insertion checks require an interactive desktop and Accessibility permission for their test processes. Run one GUI suite at a time and leave its synthetic window focused:
 
 ```bash
 bash Scripts/test-insertion.sh
+bash Scripts/test-web-insertion.sh
+# Optional Chromium coverage: supply an official arm64 Electron executable.
+bash Scripts/test-electron-insertion.sh \
+  /path/to/Electron.app/Contents/MacOS/Electron
 ```
 
-It creates its own synthetic text controls and exercises real cross-process Accessibility and clipboard behavior. Do not substitute a private document or chat for the fixture.
+These suites create their own synthetic native, nonpersistent WebKit, or isolated Electron editors and exercise cross-process Accessibility and clipboard behavior. They abort when an unrelated app becomes frontmost. Web fixtures cover inputs, textareas, generic and ARIA contenteditable, nested spans, Unicode, selection replacement, delayed updates/clipboard reads, and protected controls. Successful cases assert a single paste event. Electron is a test dependency only and is not bundled with Local Dictation. Do not substitute a private document or chat for a fixture.
+
+Use `--compile-only` as the second argument to `test-web-insertion.sh` to build without launching its window. The source build and headless checks remain suitable for CI; GUI fixtures require a local desktop session.
 
 For a complete installed runtime, quit the normal app and run:
 

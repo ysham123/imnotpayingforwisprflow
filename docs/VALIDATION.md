@@ -1,6 +1,6 @@
 # Release validation
 
-This records the scope of validation for version 1.1.0. It is not a promise of compatibility with every macOS text editor.
+This records the v1.1.1 patch's fixture results and live checks, and preserves the historical v1.1.0 release evidence. It is not a promise of compatibility with every macOS text editor.
 
 ## Environment
 
@@ -9,7 +9,35 @@ This records the scope of validation for version 1.1.0. It is not a promise of c
 - whisper.cpp 1.8.3 with Metal, Whisper large-v3-turbo Q8_0.
 - Ollama 0.9.6 and Qwen3 4B Q4_K_M.
 
-## Automated coverage
+## v1.1.1 insertion and live checks
+
+The following local GUI suites passed against the current product code on October 3, 2026, using the environment above. Each suite ran separately in its own synthetic application.
+
+| Fixture | Passing regressions |
+|---|---:|
+| Native AppKit | 13 |
+| WKWebView | 14 |
+| Electron 44.5.1 | 14 |
+
+The web suites cover input, textarea, plain and ARIA contenteditable editors, generic groups, nested spans, Unicode, multiline text, selection replacement, and identical replacements. Successful insertions assert exactly one paste event; read-only and password controls receive none. Changed-editor targets are rejected. Native checks also cover clipboard ownership, cancellation, and overlapping transactions.
+
+Two deterministic native cases change the focused editor or move the same editor's caret during the final `AXValue` read after clipboard staging. Both reject insertion without a paste and restore every seeded clipboard item and byte. Temporary copies with the final focus check removed or the cursor check restored to its earlier order each failed the corresponding regression and delivered a paste to the wrong fixture editor or caret position.
+
+Both web engines passed delayed DOM updates and an actual native clipboard read 1.6 seconds after paste dispatch, with clipboard restoration afterward. These are separate cases: saving DOM `clipboardData` immediately does not test delayed consumption of the system clipboard.
+
+Cold Electron accessibility activation initially exposed no focused editor. Three isolated cold probes passed with a 100 ms settling delay. The candidate now retries discovery once after fresh accessibility activation in a recognized Chromium runtime, within the existing inspection deadline and with the original foreground application still required. The complete Electron suite passed with this product change. Paste dispatch is never automatically retried.
+
+After installing the verified v1.1.1 bundle, the creator manually tested the Fn dictation workflow in Claude and ChatGPT and confirmed that text appeared in both on October 3, 2026. This is a user-reported live check, separate from the automated fixture results. It does not establish compatibility with every editor or app version.
+
+Both fixture engines exposed editor elements under the fixture application's PID on this machine, so remote-process accessibility paths were not exercised end to end. The generic WKWebView editor had a writable `AXValue`, and Electron exposed a writable text area; the generic-group path with a non-settable `AXValue` was also not exercised end to end.
+
+## v1.1.1 distribution checks
+
+The final release was regenerated from the verified app containing the focus and cursor guards. Its archive has two parts: 1,800,000,000 and 1,603,120,640 bytes, each below GitHub's 2 GiB asset limit. Every entry in `SHA256SUMS` passed, and the concatenated archive matched the full SHA-256 hash in the [release manifest](../Distribution/release-manifest.json).
+
+The installer ZIP passed integrity and executable-permission checks. Its command file matches the generated installer, which passed macOS Bash 3.2 syntax and help checks. The real installer completed with exit status 0 using local release parts in an isolated temporary destination, with actual disk-space and code-signature checks. Both staged and installed bundles passed strict signature verification. The installed test copy's main executable, speech worker, Ollama helper, and Info.plist matched the verified candidate byte for byte. That temporary installation was removed after verification; release assets and the candidate were preserved.
+
+## v1.1.0 automated coverage
 
 | Area | Checked behavior |
 |---|---|
@@ -24,7 +52,7 @@ This records the scope of validation for version 1.1.0. It is not a promise of c
 
 The GitHub Actions workflow runs the source build and checks that do not require a GUI or model downloads. Native insertion and real-model diagnostics are separate local checks. See [development commands](DEVELOPMENT.md#run-regression-checks).
 
-## Real models and live use
+## v1.1.0 real models and live use
 
 The installed models passed exact correction checks for:
 
@@ -37,7 +65,7 @@ Silence produced no transcript. A 9.8-second synthetic speech sample took approx
 
 The creator confirmed the physical Fn workflow in Google search and subsequently confirmed that dictation worked in the desktop chat app after editor compatibility improvements. The native fixture provides additional insertion coverage. We have not validated every web framework, third-party editor, keyboard, or microphone.
 
-## Distribution checks
+## v1.1.0 distribution checks
 
 The release process checks the complete bundle's code signature, model blob hashes, per-part SHA-256 hashes, app identity and version, and installation into a separate destination. The original working installation is preserved during release preparation. All three shipped executables target arm64 and macOS 14 or newer.
 

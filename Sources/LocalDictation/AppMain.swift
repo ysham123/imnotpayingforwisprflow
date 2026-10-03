@@ -244,6 +244,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                     let insertion = try await inserter.insert(text: result, into: destination)
                     guard token == session, !Task.isCancelled else { return }
                     if insertion == .sentWithoutVerification {
+                        recoveryNeeded = true
                         complete("Paste sent · check the text box; result available to copy")
                     } else if let warning = audio.warning {
                         complete("Inserted captured speech · \(warning)")
