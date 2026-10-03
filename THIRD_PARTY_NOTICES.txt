@@ -1,0 +1,48 @@
+Local Dictation uses the following local components:
+
+whisper.cpp v1.8.3 and its included ggml implementation: MIT license.
+Source: https://github.com/ggml-org/whisper.cpp/tree/v1.8.3
+Archive SHA-256: 870ba21409cdf66697dc4db15ebdb13bc67037d76c7cc63756c81471d8f1731a
+License notice: Licenses/whisper.cpp.txt
+
+OpenAI Whisper large-v3-turbo weights, GGML Q8_0 conversion: MIT license.
+Source: https://huggingface.co/ggerganov/whisper.cpp
+Filename: ggml-large-v3-turbo-q8_0.bin
+SHA-256: 317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1
+Upstream license notice: Licenses/Whisper-weights.txt
+
+Ollama v0.9.6, bundled Apple Silicon executable: MIT license.
+Source: https://github.com/ollama/ollama/tree/v0.9.6
+License notice: Licenses/Ollama.txt
+
+Qwen3 4B, Q4_K_M weights and model template: Apache License 2.0.
+Model: https://ollama.com/library/qwen3:4b
+Upstream: https://huggingface.co/Qwen/Qwen3-4B
+Manifest digest: 359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7
+License notice: Licenses/Qwen3.txt
+
+Local Dictation's original application code is licensed under the MIT license
+provided in LICENSE. The third-party software and models above retain their
+own licenses.
+
+Ollama runtime dependencies
+
+The bundled Ollama executable was built with Go go1.24.5 for darwin/arm64,
+from Ollama revision 43107b15b9bcff51ef1c5391c273fd1a747f6d0a.
+Licenses/ThirdParty/Ollama contains exact-version notices for all 47 embedded
+Go modules, the Go runtime, and the included llama.cpp and ggml components.
+The inventory records their pinned source URLs and copied notice paths.
+
+Whisper and Qwen weights are bundled only in downloadable release assets.
+They are not stored in the Git repository. The published archive contains the
+required notices with the app. This project is independently maintained and
+is not affiliated with Wispr Flow, OpenAI, Qwen, or Ollama.
+
+Additional ggml kernel notices: Licenses/ThirdParty/ggml/YaRN-MIT.txt and
+Licenses/ThirdParty/Ollama/llamafile-sgemm-MIT.txt retain the MIT attribution
+for YaRN by Jeffrey Quesnelle and Bowen Peng and the compiled llamafile sgemm
+code by the Mozilla Foundation.
+
+The bundled Ollama runtime also contains nlohmann JSON 3.11.3 (MIT, including
+its embedded copyright attributions) and stb_image (MIT or Unlicense).
+Their complete notices are in Licenses/ThirdParty/Ollama/.

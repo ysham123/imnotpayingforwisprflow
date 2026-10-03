@@ -1,0 +1,17 @@
+{
+  "tag": "v1.1.0",
+  "version": "1.1.0",
+  "archive_sha256": "3ee8b408e92e5ff5aa780d630232495783ce0fa041c43532e4a69b2317f897f0",
+  "parts": [
+    {
+      "name": "Local-Dictation-1.1.0-macos-arm64.tar.part001",
+      "sha256": "1125b4bbfe066c8bd4c2746af4d1f27c37ced999316c113bc9117b8936c32d2a",
+      "bytes": 1800000000
+    },
+    {
+      "name": "Local-Dictation-1.1.0-macos-arm64.tar.part002",
+      "sha256": "3e21e5580f08304df267b11fb69e64a11e4e872758ccbd2256a6d7a5ecaf26c8",
+      "bytes": 1603089920
+    }
+  ]
+}

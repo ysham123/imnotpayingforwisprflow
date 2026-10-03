@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 480" role="img" aria-labelledby="title desc">
+<title id="title">Local Dictation — double-tap Fn, speak, tap to finish.</title>
+<desc id="desc">A dark green illustration of an Fn key and an audio waveform. Voice dictation that runs on your Mac.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101b22"/><stop offset="1" stop-color="#07120f"/></linearGradient><radialGradient id="glow"><stop stop-color="#51e9a7" stop-opacity=".22"/><stop offset="1" stop-color="#51e9a7" stop-opacity="0"/></radialGradient><linearGradient id="key" x2="0" y2="1"><stop stop-color="#203e37"/><stop offset="1" stop-color="#102923"/></linearGradient></defs>
+<rect width="1280" height="480" rx="24" fill="url(#bg)"/>
+<circle cx="1050" cy="200" r="360" fill="url(#glow)"/>
+<g fill="none" stroke="#72edb5" opacity=".07"><path d="M0 400H1280M0 320H1280M0 240H1280M0 160H1280M0 80H1280"/><path d="M80 0V480M160 0V480M240 0V480M320 0V480M400 0V480M480 0V480M560 0V480M640 0V480M720 0V480M800 0V480M880 0V480M960 0V480M1040 0V480M1120 0V480M1200 0V480"/></g>
+<g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif">
+<rect x="64" y="54" width="286" height="34" rx="17" fill="#17372d" stroke="#315b49"/>
+<circle cx="83" cy="71" r="4" fill="#90f5bf"/><text x="99" y="77" font-size="14" fill="#a8f0cd" letter-spacing="1.2">LOCAL. FREE. OPEN SOURCE.</text>
+<text x="60" y="191" font-size="78" font-weight="700" letter-spacing="-3" fill="#f3faf6">Speak freely.</text>
+<text x="64" y="242" font-size="25" fill="#adc2b9">Voice dictation that runs on your Mac.</text>
+<text x="64" y="300" font-size="19" fill="#8fa69c">No subscription. No API key. No cloud transcription.</text>
+<g font-size="17" fill="#dbeae2"><rect x="64" y="355" width="90" height="40" rx="9" fill="#213c33" stroke="#476556"/><text x="83" y="381" font-weight="600">Fn × 2</text><text x="171" y="381" fill="#719f89">→</text><text x="206" y="381">Speak</text><text x="275" y="381" fill="#719f89">→</text><rect x="310" y="355" width="54" height="40" rx="9" fill="#213c33" stroke="#476556"/><text x="327" y="381" font-weight="600">Fn</text><text x="381" y="381" fill="#719f89">→</text><text x="416" y="381">Text, at your cursor</text></g>
+<rect x="911" y="153" width="178" height="178" rx="35" fill="#020a07" opacity=".5"/>
+<rect x="903" y="139" width="178" height="178" rx="35" fill="url(#key)" stroke="#608c74" stroke-width="2"/>
+<rect x="915" y="151" width="154" height="150" rx="26" fill="none" stroke="#395b49"/>
+<text x="950" y="246" font-size="64" font-weight="500" fill="#cbfce0">fn</text>
+<text x="929" y="355" font-size="14" fill="#93b29f" letter-spacing="2">LOCAL DICTATION</text>
+</g>
+<g stroke="#8bf2b7" stroke-width="5" stroke-linecap="round" opacity=".7"><path d="M766 213v24M782 189v72M798 201v48M814 176v98M830 195v60M846 211v29M1111 209v31M1127 190v71M1143 179v94M1159 200v51M1175 214v20"/></g>
+</svg>

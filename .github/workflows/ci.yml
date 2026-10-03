@@ -1,0 +1,42 @@
+name: macOS checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Compile release executable
+        run: swift build -c release
+      - name: Check shell syntax
+        run: |
+          for script in Scripts/*.sh Distribution/*.sh; do bash -n "$script"; done
+      - name: Gesture regressions
+        run: bash Scripts/test-core.sh
+      - name: Cleanup regressions
+        run: bash Scripts/test-cleanup.sh
+      - name: Audio recovery regressions
+        run: bash Scripts/test-audio.sh
+      - name: Cancellation regressions
+        run: bash Scripts/test-transcriber.sh
+      - name: Worker fault regressions
+        run: bash Scripts/test-worker-faults.sh
+      - name: Packaging and installer rollback regressions
+        run: |
+          python3 Tests/PackagingSmoke.py
+          python3 Tests/InstallerSmoke.py
