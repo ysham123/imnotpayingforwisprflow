@@ -382,7 +382,7 @@ struct CleanupClient: Sendable {
         // Allow small grammar/spelling repairs, but do not accept unfamiliar new
         // content words or repairs to capitalized names/acronyms.
         let grammarWords = Set(["a", "an", "the", "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "can", "could", "would", "should", "will", "shall", "to", "of", "in", "on", "at", "for", "from", "with", "as", "and", "or", "it", "this", "that", "these", "those", "there", "here", "my", "your", "our", "their", "his", "her", "its", "me", "us", "them"])
-        let protectedNames = Set(matches("\\b(?:[A-Z][a-z]{2,}|[A-Z]{2,})\\b", in: source).map { $0.lowercased() })
+        let protectedNames = Set(matches("\\b\\p{Lu}[\\p{L}\\p{M}]{1,}\\b", in: source).map { $0.lowercased() })
         guard outputSet.subtracting(inputSet).allSatisfy({ word in
             grammarWords.contains(word) || inputSet.contains(where: {
                 $0.count >= 4 && word.count >= 4 && !protectedNames.contains($0) && isSmallSpellingRepair($0, word)
@@ -464,9 +464,11 @@ struct CleanupClient: Sendable {
         func correctionNo(_ index: Int, words: [Word], text: String) -> Bool {
             guard words[index].text == "no", index > 0, index + 1 < words.count else { return false }
             let before = words[index - 1], after = words[index + 1]
-            guard (isNumber(before.text) && isNumber(after.text)) || (days.contains(before.text) && days.contains(after.text)) else { return false }
             let normalized = text.lowercased().replacingOccurrences(of: "’", with: "'") as NSString
             let gap = normalized.substring(with: NSRange(location: NSMaxRange(before.range), length: after.range.location - NSMaxRange(before.range)))
+            let namedRepair = protectedNames.contains(before.text) && protectedNames.contains(after.text)
+                && gap.contains(",")
+            guard (isNumber(before.text) && isNumber(after.text)) || (days.contains(before.text) && days.contains(after.text)) || namedRepair else { return false }
             return !gap.contains(where: { ".!?;\n".contains($0) })
         }
         let before = words(source), after = words(output)
@@ -490,6 +492,64 @@ struct CleanupClient: Sendable {
             }
             guard let match else { throw CleanupError.changedProtectedText }
             alignment.append(match); cursor = match + 1
+        }
+        // Retention ratios cannot protect a recipient that happens to be a
+        // small part of the sentence. Keep each ordinary name/identifier
+        // occurrence, except adjacent stutters and a local explicit name repair.
+        // Days have their existing spoken-correction rules above.
+        let retained = Set(alignment)
+        let normalizedSource = source.lowercased().replacingOccurrences(of: "’", with: "'") as NSString
+        func correctedName(at slot: Int) -> Bool {
+            var index = sourceContent[slot]
+            // A correction can supersede a full name such as Alex Smith.
+            // Only whitespace joins that span: a comma-separated recipient
+            // list must not become one removable name.
+            while index + 1 < before.count, protectedNames.contains(before[index + 1].text),
+                  !days.contains(before[index + 1].text) {
+                let join = normalizedSource.substring(with: NSRange(location: NSMaxRange(before[index].range),
+                    length: before[index + 1].range.location - NSMaxRange(before[index].range)))
+                guard !join.isEmpty, join.allSatisfy({ $0.isWhitespace && $0 != "\n" && $0 != "\r" }) else { break }
+                index += 1
+            }
+            let markerStart = index + 1
+            guard markerStart < before.count else { return false }
+            var replacement = markerStart + 1
+            switch before[markerStart].text {
+            case "sorry", "actually", "correction": break
+            case "i":
+                guard replacement < before.count, before[replacement].text == "mean" else { return false }
+                replacement += 1
+            case "make":
+                guard replacement < before.count, before[replacement].text == "that" else { return false }
+                replacement += 1
+            case "no":
+                let gap = normalizedSource.substring(with: NSRange(location: NSMaxRange(before[index].range),
+                    length: before[markerStart].range.location - NSMaxRange(before[index].range)))
+                guard gap.contains(",") else { return false }
+            default: return false
+            }
+            guard replacement < before.count,
+                  let replacementSlot = sourceContent.firstIndex(of: replacement),
+                  retained.contains(replacementSlot),
+                  protectedNames.contains(before[replacement].text),
+                  !days.contains(before[replacement].text) else { return false }
+            let gap = normalizedSource.substring(with: NSRange(location: NSMaxRange(before[index].range),
+                length: before[replacement].range.location - NSMaxRange(before[index].range)))
+            return !gap.contains(where: { ".!?;\n".contains($0) })
+        }
+        let correctionWords = Set(["sorry", "actually", "correction", "scratch", "make", "mean"])
+        let permitsCorrection = hasSelfCorrection(source)
+        for slot in sourceContent.indices {
+            let word = before[sourceContent[slot]].text
+            guard protectedNames.contains(word), !days.contains(word), !retained.contains(slot),
+                  !(permitsCorrection && correctionWords.contains(word)) else { continue }
+            var start = slot, end = slot
+            while start > 0 && before[sourceContent[start - 1]].text == word { start -= 1 }
+            while end + 1 < sourceContent.count && before[sourceContent[end + 1]].text == word { end += 1 }
+            let retainedStutter = (start...end).contains(where: { retained.contains($0) })
+            guard retainedStutter || correctedName(at: slot) else {
+                throw CleanupError.changedProtectedText
+            }
         }
         func anchors(_ words: [Word], text: String, content: [Int], mapping: [Int]) -> [String] {
             words.indices.compactMap { index in
@@ -592,7 +652,7 @@ enum CleanupError: LocalizedError {
         case .invalidResponse: return "Local correction returned an invalid result. Original text was kept."
         case .truncatedResponse: return "Local correction was incomplete. Original text was kept."
         case .unrelatedResponse: return "Local correction changed too much wording. Original text was kept."
-        case .changedProtectedText: return "Local correction changed a number, identifier, or negation. Original text was kept."
+        case .changedProtectedText: return "Local correction changed a name, number, identifier, or negation. Original text was kept."
         }
     }
 }

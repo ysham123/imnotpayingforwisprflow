@@ -45,6 +45,8 @@ import Foundation
             check(actual == output, "Accepted saved spelling")
         }
         let rejected = [
+            ("Send the whisper flow report to Alex and Bob.", "Send the Wispr Flow report to Alex."),
+            ("Send the whisper flow report to José and Alex.", "Send the Wispr Flow report to José."),
             ("Finish the report tomorrow.", "Finish the Wispr Flow report tomorrow."),
             ("Try whisper flow tomorrow.", "Try Wispr Flow today."),
             ("Do not use whisper flow.", "Use Wispr Flow."),

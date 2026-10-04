@@ -40,7 +40,11 @@ jobs:
         run: |
           bash Scripts/test-vocabulary.sh
           bash Scripts/test-vocabulary-worker.sh
-          bash Scripts/test-native-vocabulary-worker.sh
+          mkdir -p .test-build
+          curl -fL --retry 2 https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.3.tar.gz -o .test-build/whisper-v1.8.3.tar.gz
+          echo "870ba21409cdf66697dc4db15ebdb13bc67037d76c7cc63756c81471d8f1731a  .test-build/whisper-v1.8.3.tar.gz" | shasum -a 256 -c -
+          tar -xzf .test-build/whisper-v1.8.3.tar.gz -C .test-build
+          bash Scripts/test-native-vocabulary-worker.sh .test-build/whisper.cpp-1.8.3
       - name: External models and native install transaction
         run: bash Scripts/test-runtime-setup.sh
       - name: Target inspection cancellation regressions

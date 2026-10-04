@@ -210,7 +210,7 @@ Current limits:
 - Ad-hoc app updates may require permission approval again.
 - No Intel Mac, Windows, or Linux binary.
 
-On an M2 Pro with 16 GB RAM, v1.3 processed a 2.67-second synthetic dictation with custom words in a **1.39-second warm median** (1.46-second p95 across 20 runs). A 32.46-second clip took a 5.37-second median (5.68-second p95 across 10 runs). These times include recognition and cleanup, excluding microphone startup, model warming, and text delivery. Custom words improved short-clip spelling, but two speech fixtures still missed a saved term. See the [paired measurements and spelling limits](docs/VALIDATION.md#v13-warm-processing-measurements). Models stay warm during ordinary use and are released when idle under memory pressure or on sleep; loading them again takes longer.
+On an M2 Pro with 16 GB RAM, the v1.3 benchmark build processed a 2.67-second synthetic dictation with custom words in a **1.39-second warm median** (1.46-second p95 across 20 runs). A 32.46-second clip took a 5.37-second median (5.68-second p95 across 10 runs). These pre-release measurements include recognition and cleanup, excluding microphone startup, model warming, and text delivery; the final name-retention guard was checked separately for correctness. Custom words improved short-clip spelling, but two speech fixtures still missed a saved term. See the [paired measurements and spelling limits](docs/VALIDATION.md#v13-warm-processing-measurements). Models stay warm during ordinary use and are released when idle under memory pressure or on sleep; loading them again takes longer.
 
 ## Build, test, contribute
 
