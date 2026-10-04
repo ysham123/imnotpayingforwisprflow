@@ -108,4 +108,35 @@ final class HotkeyGestureTests: XCTestCase {
         XCTAssertNil(gesture.handleFnUp(at: 0.9))
         XCTAssertNil(tap(&gesture, at: 2))
     }
+    func testPendingSingleWaitsThenPlacesOnce() {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        XCTAssertNil(tap(&gesture, at: 1))
+        XCTAssertNil(gesture.advance(at: 1.39))
+        XCTAssertEqual(gesture.advance(at: 1.41), .placePending)
+        XCTAssertEqual(gesture.phase, .processing)
+        XCTAssertNil(gesture.advance(at: 2))
+    }
+
+    func testPendingDoubleNeverPlacesOrStarts() {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        XCTAssertNil(tap(&gesture, at: 1))
+        XCTAssertEqual(tap(&gesture, at: 1.2), .resolvePending)
+        XCTAssertEqual(gesture.phase, .pending)
+        XCTAssertNil(gesture.advance(at: 2))
+    }
+
+    func testPendingSecondPressDefersTimerAndFocusInvalidates() {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        _ = tap(&gesture, at: 1)
+        gesture.handleFnDown(at: 1.39)
+        XCTAssertNil(gesture.advance(at: 1.41))
+        XCTAssertEqual(gesture.handleFnUp(at: 1.55), .resolvePending)
+        _ = tap(&gesture, at: 3)
+        gesture.invalidate()
+        XCTAssertNil(gesture.advance(at: 4))
+    }
+
 }

@@ -14,6 +14,8 @@ final class AudioRecorder {
     private var sessionID: UUID?
     private(set) var isRecording = false
     var onAutomaticStop: (() -> Void)?
+    /// Raw RMS (0...1), at most ten updates per second; never contains speech.
+    var onLevel: ((Float) -> Void)?
 
     struct Recording {
         let samples: [Float]
@@ -44,6 +46,12 @@ final class AudioRecorder {
             outputFormat: outputFormat,
             inputSampleRate: inputFormat.sampleRate,
             maximumSamples: Int(Self.sampleRate * Self.maximumDuration),
+            onLevel: { [weak self] level in
+                Task { @MainActor [weak self] in
+                    guard let self, self.sessionID == token, self.isRecording else { return }
+                    self.onLevel?(level)
+                }
+            },
             onBoundary: { [weak self] in
                 Task { @MainActor [weak self] in
                     guard let self, self.sessionID == token, self.isRecording else { return }
@@ -66,6 +74,7 @@ final class AudioRecorder {
         self.session = session
         sessionID = token
         isRecording = true
+        onLevel?(0)
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
         ) { [weak self] _ in
@@ -85,6 +94,7 @@ final class AudioRecorder {
         self.session = nil
         sessionID = nil
         isRecording = false
+        onLevel?(0)
         return try session.finish()
     }
 
@@ -97,6 +107,7 @@ final class AudioRecorder {
         session = nil
         sessionID = nil
         isRecording = false
+        onLevel?(0)
     }
 
     private func removeConfigurationObserver() {
@@ -141,22 +152,32 @@ final class CaptureSession: @unchecked Sendable {
     private var failure: AudioRecorder.RecordingError?
     private var finished = false
     private let onBoundary: @Sendable () -> Void
+    private let onLevel: @Sendable (Float) -> Void
+    private var levelMeter: AudioLevelMeter
 
     init(converter: AVAudioConverter, outputFormat: AVAudioFormat,
          inputSampleRate: Double, maximumSamples: Int,
+         onLevel: @escaping @Sendable (Float) -> Void = { _ in },
          onBoundary: @escaping @Sendable () -> Void = {}) {
         self.converter = converter
         self.outputFormat = outputFormat
         self.inputSampleRate = inputSampleRate
         self.maximumSamples = maximumSamples
         self.onBoundary = onBoundary
+        self.onLevel = onLevel
+        levelMeter = AudioLevelMeter(sampleRate: outputFormat.sampleRate)
         samples.reserveCapacity(min(maximumSamples, 160_000))
     }
 
     func capture(_ input: AVAudioPCMBuffer) {
         lock.lock()
         var notify = false
-        defer { lock.unlock(); if notify { onBoundary() } }
+        var levelToNotify: Float?
+        defer {
+            lock.unlock()
+            if let levelToNotify { onLevel(levelToNotify) }
+            if notify { onBoundary() }
+        }
         guard !finished, failure == nil, input.frameLength > 0 else { return }
         guard input.format.isEqual(converter.inputFormat) else {
             failure = .inputChanged; notify = true
@@ -192,7 +213,9 @@ final class CaptureSession: @unchecked Sendable {
         }
         let count = Int(output.frameLength)
         let accepted = min(count, maximumSamples - samples.count)
-        samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: accepted))
+        let acceptedSamples = UnsafeBufferPointer(start: channel, count: accepted)
+        samples.append(contentsOf: acceptedSamples)
+        levelToNotify = levelMeter.consume(acceptedSamples)
         if samples.count == maximumSamples { failure = .recordingTooLong; notify = true }
     }
 
@@ -238,5 +261,30 @@ final class CaptureSession: @unchecked Sendable {
         defer { lock.unlock() }
         finished = true
         samples.removeAll(keepingCapacity: false)
+    }
+}
+
+/// Bounded, allocation-free meter used on the audio tap. Samples remain in the
+/// capture buffer; only one RMS scalar can leave each 100 ms audio window.
+struct AudioLevelMeter {
+    private let minimumFrames: Int
+    private var frames = 0
+    private var energy: Double = 0
+
+    init(sampleRate: Double) {
+        minimumFrames = max(1, Int(sampleRate / 10))
+    }
+
+    mutating func consume(_ samples: UnsafeBufferPointer<Float>) -> Float? {
+        for sample in samples {
+            let value = sample.isFinite ? Double(min(1, max(-1, sample))) : 0
+            energy += value * value
+        }
+        frames += samples.count
+        guard frames >= minimumFrames else { return nil }
+        let rms = Float(sqrt(energy / Double(frames)))
+        frames = 0
+        energy = 0
+        return rms
     }
 }

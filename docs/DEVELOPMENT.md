@@ -49,7 +49,12 @@ These checks need macOS developer tools, but do not need model downloads, microp
 
 ```bash
 bash Scripts/test-core.sh
+bash Scripts/test-shortcuts.sh
+bash Scripts/test-session.sh
+bash Scripts/test-target-inspector.sh
 bash Scripts/test-cleanup.sh
+bash Scripts/test-cleanup-service.sh
+bash Scripts/test-correction-lifecycle.sh
 bash Scripts/test-audio.sh
 bash Scripts/test-transcriber.sh
 bash Scripts/test-worker-faults.sh
@@ -63,6 +68,7 @@ Insertion checks require an interactive desktop and Accessibility permission for
 
 ```bash
 bash Scripts/test-insertion.sh
+bash Scripts/test-hud.sh
 bash Scripts/test-web-insertion.sh
 # Optional Chromium coverage: supply an official arm64 Electron executable.
 bash Scripts/test-electron-insertion.sh \
@@ -81,17 +87,52 @@ For a complete installed runtime, quit the normal app and run:
 
 Diagnostics check model startup, correction examples, and silence. Add `--audio /path/to/synthetic-speech.wav` to measure transcription and cleanup of a supplied test file. These diagnostics print their synthetic text to the terminal. They do not verify physical Fn presses or insertion into a particular third-party editor.
 
+## Dictation shortcuts
+
+`bash Scripts/test-shortcuts.sh .test-build/shortcuts --registration` also exercises real exclusive Carbon registration and conflicts without opening windows. `bash Scripts/test-shortcut-recorder.sh` runs the isolated chooser-window checks with events posted only to its own AppKit queue; add `.test-build/shortcut-recorder --compile-only` on a headless runner.
+
+Fn / Globe remains the default: double-tap starts recording, one tap stops, and one tap places waiting text after the double-tap window. A double-tap while text is waiting asks the user to resolve it rather than starting a new recording.
+
+**Setup… → Dictation shortcut → Change…** records a custom key combination. Command, Control, or Option plus a key is accepted, with optional Shift. F1–F20 can also be used without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts are rejected. Escape or switching to another app cancels recording the shortcut. One custom press starts, stops, or places waiting text according to the session phase. Held-key repeats and rapid duplicate presses are ignored. Custom mode disables Fn dictation actions; **Use Fn / Globe** restores the default gesture. Setup, menu status, and placement guidance use the selected shortcut.
+
+`HotkeyPreferences.swift` stores the selected `ShortcutConfiguration` as JSON in local `UserDefaults` under `dictation.shortcut.v1`. Registration uses the physical virtual key code and Carbon modifier bits; the display label is presentation only. Invalid stored configurations fall back to Fn / Globe. A valid saved shortcut that cannot be registered is reported as unavailable rather than silently replaced with Fn.
+
+`FnHotkey.configure` uses Carbon global hotkey registration and registers a replacement before releasing an existing binding. The setup recorder intentionally stops the shortcut listener and temporarily unregisters its binding so it can capture the same chord. Failure or cancellation preserves the saved choice; closing the recorder attempts to restore it. If another process has claimed that chord, Setup reports the conflict. A replacement must register successfully before its preference is saved. Global registration cannot detect every app-specific shortcut, so users still need to choose a combination they do not use elsewhere. Shortcut changes affect input control only; recording, transcription, cleanup, and protected placement retain their existing behavior.
+
+`ShortcutConfiguration.validationError` reserves Command-A, H, Z, X, C, V, Q, W, M, Tab, Space, and backtick, including their Shift variants. Any Command-Space combination and Control-Command-Q with optional Shift are also reserved. Escape, Fn, and modifier-only keys cannot be custom bindings. `CustomHotkeyGesture` requires physical key release before another action and applies a 350 ms rearm interval. Keep these checks and phase guards when changing shortcut registration.
+
+## Measure performance
+
+The menu action **Export performance measurements…** saves numeric timing and outcome data from the last 100 sessions in memory. It includes microphone readiness, transcription/correction completion, paste dispatch, first observed insertion, and readiness for another capture when each stage is available. It excludes dictated text, audio, and application names. A dispatched paste and a verified visible insertion are separate measurements.
+
+Run backend benchmarks with a synthetic audio fixture after quitting the normal app:
+
+```bash
+bash Scripts/benchmark-backend.sh \
+  "/Applications/Local Dictation.app/Contents/Resources" \
+  /path/to/synthetic-speech.wav /tmp/v1.2-benchmark.json 5 2 - 20
+# Repeat against the preceding release's source for comparison:
+bash Scripts/benchmark-backend.sh \
+  "/Applications/Local Dictation.app/Contents/Resources" \
+  /path/to/synthetic-speech.wav /tmp/v1.1-benchmark.json 5 2 v1.1.1 20
+```
+
+The harness uses an isolated loopback service and reports numeric results without transcripts. The fourth argument is repetitions per condition; the fifth is idle seconds. The sixth selects a baseline Git ref (`-` uses the current source), and the seventh optionally overrides warm repetitions. These commands reproduce the published 20 warm / 5 other runs per length. Use more than 600 seconds to exercise the older model-retention timeout. Short idle measurements do not establish performance after that timeout. Backend benchmarks exclude microphone capture and editor delivery; use the interactive exporter for those stages.
+
 ## Source map
 
 | Location | Responsibility |
 |---|---|
-| `Sources/DictationCore/` | Fn gesture state machine |
+| `Sources/DictationCore/` | Fn/custom gestures, shortcut validation, and protected dictation session state |
 | `Sources/LocalDictation/AppMain.swift` | Menu, setup, state, permissions, recording lifecycle |
-| `FnHotkey.swift` | Global event tap and hardware Fn/Globe events |
+| `DictationHUD.swift` + `InteractionMetrics.swift` | Nonactivating status panel and content-free local timing export |
+| `FnHotkey.swift` | Input activity event tap, Fn/Globe gestures, and custom Carbon hotkey registration |
+| `ShortcutRecorder.swift` + `HotkeyPreferences.swift` | Setup shortcut capture and local preference persistence |
 | `AudioRecorder.swift` | Capture, resampling, bounded memory, interruption recovery |
 | `WhisperTranscriber.swift` + `Native/whisper-worker.cpp` | Persistent local speech worker, framed audio IPC, cancellation |
 | `LocalCorrectionService.swift` + `CleanupClient.swift` | Bundled Ollama lifecycle, cleanup request, conservative validation |
-| `TextInserter.swift` | Target validation, editable ancestors, clipboard transaction, paste verification |
+| `TargetInspector.swift` | Pinned field identity, serialized Accessibility inspection, focus and caret validation |
+| `TextInserter.swift` + `DeliveryCoordinator.swift` | Validated paste delivery, serialized clipboard leases, insertion observation, and restoration |
 | `Tests/` | Gesture, cleanup, audio, worker, insertion, and packaging regressions |
 | `Distribution/` | Installer template and pinned current-release metadata |
 
@@ -102,7 +143,7 @@ Build and validate a complete app first. Set its version in `Resources/Info.plis
 ```bash
 python3 Scripts/make-release.py \
   "$PWD/.build-native/Local Dictation.app" \
-  "$PWD/release-assets" --tag v1.1.0
+  "$PWD/release-assets" --tag v1.2.0
 ```
 
 The release builder copies the app, includes first- and third-party notices, signs that copy ad-hoc, verifies it, and creates two archive parts below GitHub's 2 GiB asset limit. The original app is not modified. It also creates:

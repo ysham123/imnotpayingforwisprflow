@@ -2,11 +2,11 @@
 # Local Dictation installer. Uses only tools included with macOS.
 # This template is rendered with immutable release hashes by make-release.py.
 set -euo pipefail
-release_tag='v1.1.1'
+release_tag='v1.2.0'
 base_url='https://github.com/ysham123/imnotpayingforwisprflow/releases/download/'"$release_tag"
 app_name='Local Dictation.app'
 expected_bundle='dev.yosef.localdictation'
-expected_version='1.1.1'
+expected_version='1.2.0'
 destination="$HOME/Applications"
 assets_dir=''
 replace=0
@@ -107,8 +107,8 @@ while read -r filename expected_hash expected_bytes; do
   printf 'Verified %s\n' "$filename"
   part_paths+=("$part")
 done <<'PARTS'
-Local-Dictation-1.1.1-macos-arm64.tar.part001 9dac1eb55841c19746855d065d6bdd5846ded70108f91e40d72622a9b4102bc4 1800000000
-Local-Dictation-1.1.1-macos-arm64.tar.part002 76fe5b2ce0950a48fbfb6368a456605f1feb2fac8a48aafcf5ffdba25655c28c 1603120640
+Local-Dictation-1.2.0-macos-arm64.tar.part001 2767d99c3db5782d9db4f66957d5a9ff2433f2718ed793c4547bd49d7e65e2ee 1800000000
+Local-Dictation-1.2.0-macos-arm64.tar.part002 da17aabab5cb362b67977ff42e7a20372c635defc528e78b33cf3530dba3862d 1603591680
 PARTS
 printf '\nExtracting and verifying the app…\n'
 /bin/cat "${part_paths[@]}" | /usr/bin/tar -xpf - -C "$stage"
@@ -129,4 +129,4 @@ if [ "$assets_dir" = "$HOME/Library/Caches/LocalDictation/Installer/$release_tag
   rmdir "$assets_dir" 2>/dev/null || true
 fi
 printf '\nInstalled: %s\n\n' "$target"
-printf '%s\n' 'Next: open Local Dictation.app, then use Setup in its microphone menu.' 'Grant Local Dictation Microphone, Accessibility, and Input Monitoring.' 'Set the Globe key action to Do Nothing and disable competing Fn shortcuts.' 'Click a text box, double-tap Fn, speak, then tap Fn once.' '' 'This community build is ad-hoc signed, not notarized by Apple.' 'If macOS blocks opening it, review System Settings > Privacy & Security > Open Anyway.' 'The installer does not change Gatekeeper, permissions, or your keyboard settings.'
+printf '%s\n' 'Next: open Local Dictation.app, then use Setup in its microphone menu.' 'Grant Local Dictation Microphone, Accessibility, and Input Monitoring.' 'Keep Fn / Globe or choose your own shortcut in Setup > Dictation shortcut.' 'For Fn: set the Globe key action to Do Nothing and disable competing Fn shortcuts.' 'Click a text box, double-tap Fn, speak, then tap Fn once. Custom shortcuts use one press to start and stop.' '' 'This community build is ad-hoc signed, not notarized by Apple.' 'If macOS blocks opening it, review System Settings > Privacy & Security > Open Anyway.' 'The installer does not change Gatekeeper, permissions, or your keyboard settings.'

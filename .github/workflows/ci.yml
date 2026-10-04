@@ -28,8 +28,22 @@ jobs:
           for script in Scripts/*.sh Distribution/*.sh; do bash -n "$script"; done
       - name: Gesture regressions
         run: bash Scripts/test-core.sh
+      - name: Custom shortcut regressions
+        run: bash Scripts/test-shortcuts.sh
+      - name: Compile shortcut recorder fixture
+        run: bash Scripts/test-shortcut-recorder.sh .test-build/shortcut-recorder --compile-only
+      - name: Session and diagnostics regressions
+        run: bash Scripts/test-session.sh
+      - name: Target inspection cancellation regressions
+        run: bash Scripts/test-target-inspector.sh
       - name: Cleanup regressions
         run: bash Scripts/test-cleanup.sh
+      - name: Owned correction cache regressions
+        run: bash Scripts/test-cleanup-service.sh
+      - name: Correction lifecycle regressions
+        run: bash Scripts/test-correction-lifecycle.sh
+      - name: Compile floating indicator fixture
+        run: bash Scripts/test-hud.sh .test-build/hud --compile-only
       - name: Audio recovery regressions
         run: bash Scripts/test-audio.sh
       - name: Cancellation regressions

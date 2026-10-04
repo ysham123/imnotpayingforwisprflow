@@ -13,7 +13,16 @@ import ApplicationServices
         setbuf(stdout, nil)
         app.setActivationPolicy(.prohibited)
         Task { @MainActor in
-            do { try await run(); print("Passed 14 synthetic \(engine) insertion regressions"); exit(0) }
+            do {
+                if let count = Int(ProcessInfo.processInfo.environment["LOCAL_DICTATION_SELECTION_STRESS_COUNT"] ?? "") {
+                    try check((1...50).contains(count), "Selection stress count must be between 1 and 50")
+                    try await selectionStress(count)
+                    print("Passed \(count) synthetic \(engine) repeated selection placements")
+                } else {
+                    try await run(); print("Passed 16 synthetic \(engine) insertion regressions")
+                }
+                exit(0)
+            }
             catch { fputs("WEB INSERTION TEST FAILED: \(error)\n", stderr); exit(1) }
         }
         app.run()
@@ -164,8 +173,10 @@ import ApplicationServices
     @MainActor static func expectValue(_ field: String, _ expected: String, pasteCount: Int = 1) async throws {
         let reply = try await command([:])
         let actual = (reply["values"] as? [String: String])?[field]
-        try check(actual == expected, "Incorrect synthetic \(field) contents: expected \(String(reflecting: expected)), got \(String(reflecting: actual))")
-        try check((reply["pasteCounts"] as? [String: Int])?[field] == pasteCount, "Synthetic \(field) received an unexpected number of paste events")
+        let actualCount = (reply["pasteCounts"] as? [String: Int])?[field]
+        let diagnostics = "active=\(reply["active"] ?? "absent"), DOMselection=\(reply["selection"] ?? "absent"), pasteCount=\(actualCount.map(String.init) ?? "absent")"
+        try check(actual == expected, "Incorrect synthetic \(field) contents: expected \(String(reflecting: expected)), got \(String(reflecting: actual)); \(diagnostics)")
+        try check(actualCount == pasteCount, "Synthetic \(field) received an unexpected number of paste events; \(diagnostics)")
     }
 
     @MainActor static func paste(_ inserter: TextInserter, field: String, original: String,
@@ -185,6 +196,73 @@ import ApplicationServices
         }
         _ = try await inserter.insert(text: text, into: target)
         try await expectValue(field, expected)
+    }
+
+    /// Repeat the previously observed selection failure with only owned fixture
+    /// text. Log DOM and captured AX ranges before every dispatch so a mismatch
+    /// can be distinguished from a duplicate paste or stale selection.
+    @MainActor static func selectionStress(_ count: Int) async throws {
+        guard TextInserter.accessibilityGranted() else {
+            throw NSError(domain: "Synthetic test runner needs Accessibility permission; no user apps were inspected", code: 1)
+        }
+        _ = try await command([:])
+        try await seed("textarea", "", location: 0)
+        let inserter = TextInserter(), board = NSPasteboard.general
+        let saved = (board.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+        }
+        defer {
+            board.clearContents()
+            let items = saved.map { entries -> NSPasteboardItem in
+                let item = NSPasteboardItem(); for (type, data) in entries { item.setData(data, forType: type) }; return item
+            }
+            if !items.isEmpty { board.writeObjects(items) }
+        }
+        board.clearContents(); board.setString("synthetic selection stress sentinel", forType: .string)
+        inserter.primeFrontmostAccessibility()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let originals = ["before wrong after", "🙂 café wrong end", "one\ntwo wrong\nthree"]
+        for index in 0..<count {
+            let original = originals[index % originals.count]
+            let range = (original as NSString).range(of: "wrong")
+            let replacement = "right\(index)"
+            let expected = (original as NSString).replacingCharacters(in: range, with: replacement)
+            try await seed("textarea", original, location: range.location, length: range.length)
+            let before = try await command([:])
+            try check((before["values"] as? [String: String])?["textarea"] == original,
+                      "Owned fixture textarea changed before capture")
+            try check((before["pasteCounts"] as? [String: Int])?["textarea"] == 0,
+                      "Owned fixture received a paste before test dispatch")
+            let domRange = before["selection"] as? [String: Int]
+            try check(domRange?["location"] == range.location && domRange?["length"] == range.length,
+                      "Fixture selection moved before capture: \(before["selection"] ?? "absent")")
+            let target: TextInserter.Target
+            let captureMethod: String
+            var anchorRange = "legacy"
+            if index.isMultiple(of: 2) {
+                captureMethod = "asynchronous anchor"
+                guard let anchor = inserter.beginCapture(expectedProcessIdentifier: fixturePID) else {
+                    throw NSError(domain: "Repeated selection identity anchor unavailable", code: 1)
+                }
+                anchorRange = anchor.selection.map { "\($0.location):\($0.length)" } ?? "marker"
+                target = try await inserter.inspect(anchor)
+            } else {
+                captureMethod = "legacy capture"
+                target = try capture(inserter)
+            }
+            let targetRange = target.selection.map { "\($0.location):\($0.length)" } ?? "marker"
+            print("SELECTION \(index + 1): \(captureMethod), DOM=\(range.location):\(range.length), anchor=\(anchorRange), AX=\(targetRange), role=\(target.role)")
+            try check(target.selection?.location == range.location && target.selection?.length == range.length,
+                      "Captured AX textarea selection disagrees with its owned DOM selection")
+            if let value = target.value {
+                try check(value == original, "Captured AX textarea value disagrees with its owned DOM value")
+            }
+            var dispatched = 0
+            _ = try await inserter.insert(text: replacement, into: target, onDispatched: { dispatched += 1 })
+            try await expectValue("textarea", expected, pasteCount: 1)
+            try check(dispatched == 1, "Repeated selection dispatched more than once")
+            try check(board.string(forType: .string) == "synthetic selection stress sentinel", "Stress clipboard sentinel was not restored")
+        }
     }
 
     @MainActor static func run() async throws {
@@ -254,6 +332,24 @@ import ApplicationServices
         catch TextInserter.InsertionError.targetChanged { }
         try await expectValue("plain", "same", pasteCount: 0)
         print("PASS identical different web field rejection")
+        for field in ["input", "rich"] {
+            try await seed(field, "anchor ", location: 7)
+            inserter.primeFrontmostAccessibility()
+            try await Task.sleep(nanoseconds: 100_000_000)
+            guard let anchor = inserter.beginCapture(expectedProcessIdentifier: fixturePID) else {
+                throw NSError(domain: "Warm synthetic \(engine) \(field) identity anchor unavailable", code: 1)
+            }
+            let pinned = try await inserter.inspect(anchor)
+            var dispatched = 0, verified = 0
+            _ = try await inserter.insert(text: "placed", into: pinned,
+                onDispatched: { dispatched += 1 }, onVerified: { verified += 1 })
+            try await expectValue(field, "anchor placed", pasteCount: 1)
+            try check(dispatched == 1, "Anchored web placement dispatched repeatedly")
+            // Marker-only editors may lack a value/range API for verification;
+            // DOM acceptance above still proves one owned-fixture insertion.
+            try check(verified <= 1, "Anchored web verification callback repeated")
+            print("PASS \(engine) asynchronous pinned \(field) capture and explicit placement")
+        }
         print(remoteElementObserved ? "Observed and validated remote \(engine) editor process" : "\(engine) editor was presented under fixture application PID on this macOS version")
     }
 }

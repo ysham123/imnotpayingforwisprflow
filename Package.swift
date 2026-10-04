@@ -9,7 +9,8 @@ let package = Package(
         .target(name: "DictationCore"),
         .executableTarget(name: "LocalDictation", dependencies: ["DictationCore"],
             linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("AVFoundation"),
-                             .linkedFramework("ApplicationServices"), .linkedFramework("CoreGraphics")]),
+                             .linkedFramework("ApplicationServices"), .linkedFramework("CoreGraphics"),
+                             .linkedFramework("Carbon")]),
         .testTarget(name: "DictationCoreTests", dependencies: ["DictationCore"])
     ]
 )

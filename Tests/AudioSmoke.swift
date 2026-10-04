@@ -45,6 +45,19 @@ import Foundation
         canceled.capture(buffer()); canceled.discard(); canceled.capture(buffer())
         do { _ = try canceled.finish(); fatalError("Canceled audio returned") } catch AudioRecorder.RecordingError.emptyRecording { }
         print("PASS empty interruption and discard ignore late buffers")
-        print("Passed 6 audio recovery regressions")
+        var meter = AudioLevelMeter(sampleRate: 16_000)
+        let half = [Float](repeating: 0.1, count: 800)
+        precondition(half.withUnsafeBufferPointer { meter.consume($0) } == nil, "Meter emitted before 100 ms")
+        let level = half.withUnsafeBufferPointer { meter.consume($0) }!
+        precondition(abs(level - 0.1) < 0.0001, "Incorrect RMS")
+        precondition(half.withUnsafeBufferPointer { meter.consume($0) } == nil, "Meter did not reset throttle")
+        print("PASS RMS is accurate and throttled to 10 Hz")
+        var finiteMeter = AudioLevelMeter(sampleRate: 10)
+        let invalid: [Float] = [.nan, .infinity, -.infinity]
+        precondition(invalid.withUnsafeBufferPointer { finiteMeter.consume($0) } == 0, "Nonfinite meter output")
+        let loud: [Float] = [-2, 2]
+        precondition(loud.withUnsafeBufferPointer { finiteMeter.consume($0) } == 1, "Meter exceeds its range")
+        print("PASS level meter sanitizes nonfinite and overrange inputs")
+        print("Passed 8 audio recovery and level regressions")
     }
 }

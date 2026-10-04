@@ -11,7 +11,7 @@ mkdir -p "$build_dir/ModuleCache" "$build_dir/NativeFixture.app/Contents/MacOS"
 build_dir="$(cd "$build_dir" && pwd)"
 fixture_app="$build_dir/NativeFixture.app"
 swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" "$source_dir/Tests/InsertionFixture.swift" -o "$fixture_app/Contents/MacOS/Fixture"
-swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" "$source_dir/Sources/LocalDictation/TextInserter.swift" "$source_dir/Tests/InsertionSmoke.swift" -o "$build_dir/insertion-smoke"
+swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" "$source_dir/Sources/LocalDictation/TextInserter.swift" "$source_dir/Sources/LocalDictation/TargetInspector.swift" "$source_dir/Sources/LocalDictation/DeliveryCoordinator.swift" "$source_dir/Tests/InsertionSmoke.swift" -o "$build_dir/insertion-smoke"
 cat > "$fixture_app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
