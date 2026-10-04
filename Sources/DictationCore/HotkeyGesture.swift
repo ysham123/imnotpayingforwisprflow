@@ -7,11 +7,15 @@ public struct HotkeyGesture: Sendable {
         case idle
         case listening
         case processing
+        /// A result exists but has never been dispatched to an editor.
+        case pending
     }
 
     public enum Action: Equatable, Sendable {
         case start
         case stop
+        case placePending
+        case resolvePending
     }
 
     public private(set) var phase: Phase = .idle
@@ -23,6 +27,13 @@ public struct HotkeyGesture: Sendable {
     private var currentTapIsEligible = false
     private var firstTapAt: TimeInterval?
     private var acceptTapsAfter: TimeInterval = -.infinity
+
+    /// A timer may call advance(at:) at this deadline. A second press suspends
+    /// placement until it is released, so a slow double tap cannot paste early.
+    public var pendingActionDeadline: TimeInterval? {
+        guard phase == .pending, fnDownAt == nil, let firstTapAt else { return nil }
+        return firstTapAt + doubleTapInterval
+    }
 
     public init(
         doubleTapInterval: TimeInterval = 0.35,
@@ -41,6 +52,10 @@ public struct HotkeyGesture: Sendable {
     public mutating func handleFnDown(at time: TimeInterval) -> Action? {
         // Duplicate flagsChanged notifications do not begin another tap.
         guard fnDownAt == nil else { return nil }
+        if phase == .pending, let firstTapAt, time > firstTapAt + doubleTapInterval {
+            // An overdue timer must never paste while another tap is starting.
+            self.firstTapAt = nil
+        }
         fnDownAt = time
         currentTapIsEligible = phase != .processing && time >= acceptTapsAfter
         return nil
@@ -68,6 +83,15 @@ public struct HotkeyGesture: Sendable {
             firstTapAt = nil
             acceptTapsAfter = time + rearmInterval
             return .stop
+        case .pending:
+            if let firstTapAt, beganAt >= firstTapAt,
+               beganAt - firstTapAt <= doubleTapInterval {
+                self.firstTapAt = nil
+                acceptTapsAfter = time + rearmInterval
+                return .resolvePending
+            }
+            firstTapAt = time
+            return nil
         case .idle:
             if let firstTapAt,
                time >= firstTapAt,
@@ -79,6 +103,23 @@ public struct HotkeyGesture: Sendable {
             firstTapAt = time
             return nil
         }
+    }
+
+    /// Completes a pending single tap after the double-tap window, exactly once.
+    @discardableResult
+    public mutating func advance(at time: TimeInterval) -> Action? {
+        guard let deadline = pendingActionDeadline, time >= deadline else { return nil }
+        firstTapAt = nil
+        phase = .processing
+        acceptTapsAfter = time + rearmInterval
+        return .placePending
+    }
+
+    /// Invalidates gestures after pointer activity or a focus change.
+    public mutating func invalidate() {
+        fnDownAt = nil
+        currentTapIsEligible = false
+        firstTapAt = nil
     }
 
     /// Fn used with another key or modifier must remain an ordinary shortcut.

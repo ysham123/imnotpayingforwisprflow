@@ -8,12 +8,23 @@ enum DictationError: LocalizedError {
 
 /// Serial process boundary keeps audio and model work away from AppKit.
 final class WhisperTranscriber {
+    struct Timing: Sendable {
+        let startupSeconds: Double
+        let writeSeconds: Double
+        let recognitionSeconds: Double
+        let totalSeconds: Double
+    }
     private let queue = DispatchQueue(label: "localdictation.whisper", qos: .userInitiated)
     private var process: Process?
     private let processLock = NSLock()
     private var cancellationGeneration: UInt64 = 0
+    private var workerGeneration: UInt64?
+    private var timing: Timing?
     private var input: FileHandle?
     private var output: FileHandle?
+    // A worker may split a JSON line over writes or coalesce multiple lines.
+    // Retain the unread suffix rather than doing a syscall for every byte.
+    private var readBuffer = Data()
     private let executable: URL
     private let model: URL
 
@@ -27,6 +38,27 @@ final class WhisperTranscriber {
         model = resources.appendingPathComponent("Models/ggml-large-v3-turbo-q8_0.bin")
     }
 
+    var lastTiming: Timing? {
+        processLock.lock(); defer { processLock.unlock() }
+        return timing
+    }
+
+    func rewarm() async throws { try await prepare() }
+
+    /// Releases model memory and invalidates queued work before returning.
+    func suspend() async {
+        await withCheckedContinuation { continuation in
+            // Publish cancellation and its queue barrier atomically, so a new
+            // generation cannot enqueue a warmup ahead of the memory release.
+            processLock.lock()
+            cancellationGeneration &+= 1
+            let worker = process
+            queue.async { self.reset(); continuation.resume() }
+            processLock.unlock()
+            if let worker { Self.terminate(worker) }
+        }
+    }
+
     func prepare() async throws {
         try Task.checkCancellation()
         let generation = currentGeneration()
@@ -38,7 +70,7 @@ final class WhisperTranscriber {
                         try self.ensureRunning(expectedGeneration: generation)
                         try self.checkGeneration(generation)
                         continuation.resume()
-                    } catch { self.reset(); continuation.resume(throwing: error) }
+                    } catch { self.reset(expectedGeneration: generation); continuation.resume(throwing: error) }
                 }
             }
         }, onCancel: { self.cancel(expectedGeneration: generation) })
@@ -52,9 +84,11 @@ final class WhisperTranscriber {
             return try await withCheckedThrowingContinuation { continuation in
                 queue.async {
                     do {
+                        let started = ProcessInfo.processInfo.systemUptime
                         try self.checkGeneration(generation)
                         try self.ensureRunning(expectedGeneration: generation)
                         try self.checkGeneration(generation)
+                        let prepared = ProcessInfo.processInfo.systemUptime
                         guard !samples.isEmpty, samples.count <= 1_920_000, let input = self.input else {
                             throw DictationError.message("The dictation audio was empty or too long.")
                         }
@@ -63,14 +97,20 @@ final class WhisperTranscriber {
                         samples.withUnsafeBytes { packet.append(contentsOf: $0) }
                         let deadline = ProcessInfo.processInfo.systemUptime + self.requestTimeout
                         try self.write(packet, to: input.fileDescriptor, deadline: deadline, generation: generation)
+                        let written = ProcessInfo.processInfo.systemUptime
                         let result = try self.readJSON(deadline: deadline, generation: generation)
                         try self.checkGeneration(generation)
                         if let error = result["error"] as? String { throw DictationError.message(error) }
                         guard let text = result["text"] as? String else {
                             throw DictationError.message("The speech engine returned an invalid result.")
                         }
+                        let finished = ProcessInfo.processInfo.systemUptime
+                        self.processLock.lock()
+                        self.timing = Timing(startupSeconds: prepared - started, writeSeconds: written - prepared,
+                                             recognitionSeconds: finished - written, totalSeconds: finished - started)
+                        self.processLock.unlock()
                         continuation.resume(returning: text.trimmingCharacters(in: .whitespacesAndNewlines))
-                    } catch { self.reset(); continuation.resume(throwing: error) }
+                    } catch { self.reset(expectedGeneration: generation); continuation.resume(throwing: error) }
                 }
             }
         }, onCancel: { self.cancel(expectedGeneration: generation) })
@@ -108,7 +148,9 @@ final class WhisperTranscriber {
 
     private func ensureRunning(expectedGeneration: UInt64) throws {
         try checkGeneration(expectedGeneration)
-        if process?.isRunning == true { return }
+        // A recently terminated child can still report isRunning while its
+        // pipes drain. It belongs to the canceled generation and cannot be reused.
+        if process?.isRunning == true, workerGeneration == expectedGeneration { return }
         reset()
         guard FileManager.default.isExecutableFile(atPath: executable.path),
               FileManager.default.fileExists(atPath: model.path) else {
@@ -124,6 +166,7 @@ final class WhisperTranscriber {
             processLock.unlock(); Self.terminate(task); throw CancellationError()
         }
         process = task
+        workerGeneration = expectedGeneration
         processLock.unlock()
         input = stdinPipe.fileHandleForWriting; output = stdoutPipe.fileHandleForReading
         // Close the parent's unused pipe ends so terminated workers produce EOF.
@@ -177,17 +220,23 @@ final class WhisperTranscriber {
     private func readJSON(deadline: TimeInterval, generation: UInt64) throws -> [String: Any] {
         guard let output else { throw DictationError.message("The speech engine is unavailable.") }
         let fd = output.fileDescriptor
-        var data = Data(), byte: UInt8 = 0
-        while data.count <= 128_000 {
-            try waitForIO(fd, events: Int16(POLLIN), deadline: deadline, generation: generation)
-            let count = Darwin.read(fd, &byte, 1)
-            if count < 0 && (errno == EINTR || errno == EAGAIN) { continue }
-            guard count == 1 else { break }
-            if byte == 10 {
-                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { break }
+        var chunk = [UInt8](repeating: 0, count: 4_096)
+        while true {
+            try checkGeneration(generation)
+            if let newline = readBuffer.firstIndex(of: 10) {
+                let length = readBuffer.distance(from: readBuffer.startIndex, to: newline)
+                guard length <= 128_000 else { break }
+                let line = Data(readBuffer[..<newline])
+                readBuffer.removeSubrange(...newline)
+                guard let json = try JSONSerialization.jsonObject(with: line) as? [String: Any] else { break }
                 return json
             }
-            data.append(byte)
+            guard readBuffer.count <= 128_000 else { break }
+            try waitForIO(fd, events: Int16(POLLIN), deadline: deadline, generation: generation)
+            let count = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!, $0.count) }
+            if count < 0 && (errno == EINTR || errno == EAGAIN) { continue }
+            guard count > 0 else { break }
+            readBuffer.append(contentsOf: chunk.prefix(count))
         }
         throw DictationError.message("The speech engine returned an invalid response. Try dictating again.")
     }
@@ -202,10 +251,15 @@ final class WhisperTranscriber {
         }
     }
 
-    private func reset() {
-        processLock.lock(); let worker = process; process = nil; processLock.unlock()
+    private func reset(expectedGeneration: UInt64? = nil) {
+        processLock.lock()
+        if let expectedGeneration, let workerGeneration, workerGeneration != expectedGeneration {
+            processLock.unlock(); return
+        }
+        let worker = process; process = nil; workerGeneration = nil; timing = nil; processLock.unlock()
         if let worker { Self.terminate(worker) }
         try? input?.close(); try? output?.close()
         input = nil; output = nil
+        readBuffer.removeAll(keepingCapacity: true)
     }
 }

@@ -16,8 +16,12 @@ struct AppMain {
 
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
-    private enum Phase { case loading, idle, listening, processing }
-    private var phase: Phase = .loading
+    private var state = DictationSessionState()
+    private var phase: DictationSessionState.Phase { state.phase }
+    private var session: UUID { state.id }
+    private var lastText: String? { state.lastText }
+    private let hud = DictationHUD()
+    private let metrics = InteractionMetrics()
     private let hotkey = FnHotkey()
     private let recorder = AudioRecorder()
     private let inserter = TextInserter()
@@ -28,18 +32,29 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var statusMenu: NSMenuItem!
     private var copyMenu: NSMenuItem!
     private var cancelMenu: NSMenuItem!
+    private var discardMenu: NSMenuItem!
     private var retryMenu: NSMenuItem!
     private var setupWindow: NSWindow?
     private var setupStatus: NSTextField?
     private var timer: Timer?
     private var listeningTimer: Timer?
-    private var target: TextInserter.Target?
-    private var session = UUID()
+    private var targetTask: Task<TextInserter.Target?, Never>?
+    private var dismissTask: Task<Void, Never>?
+    private var deliveryTasks: [UUID: Task<Void, Never>] = [:]
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var pressureSource: DispatchSourceMemoryPressure?
+    private var sleeping = false
+    private var memoryPressure = false
+    private var releaseEnginesWhenIdle: Bool { sleeping || memoryPressure }
+    private var suspending = false
     private var processingTask: Task<Void, Never>?
-    private var lastText: String?
     private var engineReady = false
     private var correctionReady = false
     private var correctionTask: Task<Void, Never>?
+    private var correctionGeneration: UInt64 = 0
+    private var engineGeneration: UInt64 = 0
+    private var wakeRequested = false
+    private var copyInProgress = false
     private var correctionStatus = "Correction is starting"
     private var recoveryNeeded = false
     private var isTerminating = false
@@ -52,7 +67,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             .map { URL(fileURLWithPath: $0) } ?? Bundle.main.resourceURL!
         transcriber = WhisperTranscriber(resources: resources)
         correctionService = LocalCorrectionService(resources: resources)
-        cleanup = CleanupClient(baseURL: LocalCorrectionService.endpoint)
+        cleanup = correctionService.makeCleanupClient()
         configureMenu()
         if CommandLine.arguments.contains("--diagnostics") {
             runDiagnostics(resources: resources); return
@@ -60,6 +75,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--paste-test") {
             runPasteTest(); return
         }
+        configureHUD()
+        configureLifecycle()
         Task { await prepareEngines() }
         recorder.onAutomaticStop = { [weak self] in self?.finishDictation() }
         timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -97,6 +114,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         copyMenu.target = self; copyMenu.isEnabled = false; menu.addItem(copyMenu)
         cancelMenu = NSMenuItem(title: "Cancel dictation", action: #selector(cancelDictation), keyEquivalent: "")
         cancelMenu.target = self; cancelMenu.isEnabled = false; menu.addItem(cancelMenu)
+        discardMenu = NSMenuItem(title: "Discard waiting text", action: #selector(discardPending), keyEquivalent: "")
+        discardMenu.target = self; discardMenu.isEnabled = false; menu.addItem(discardMenu)
+        let diagnostics = NSMenuItem(title: "Export performance measurements…", action: #selector(exportMetrics), keyEquivalent: "")
+        diagnostics.target = self; menu.addItem(diagnostics)
         retryMenu = NSMenuItem(title: "Retry local engines", action: #selector(retryEngines), keyEquivalent: "")
         retryMenu.target = self; menu.addItem(retryMenu)
         menu.addItem(.separator())
@@ -113,40 +134,53 @@ final class AppController: NSObject, NSApplicationDelegate {
         item?.button?.image = NSImage(systemSymbolName: icon, accessibilityDescription: message)
         item?.button?.contentTintColor = phase == .listening ? .systemRed : nil
         item?.button?.toolTip = "Local Dictation: \(message)"
-        copyMenu?.isEnabled = lastText != nil
+        copyMenu?.isEnabled = !copyInProgress && (phase == .idle || phase == .pending) && (state.pendingText != nil || lastText != nil)
+        discardMenu?.isEnabled = phase == .pending
         cancelMenu?.isEnabled = phase == .listening || phase == .processing
-        retryMenu?.isEnabled = phase == .idle
+        retryMenu?.isEnabled = phase == .idle && !suspending
         updateSetupStatus()
     }
 
     private func prepareEngines() async {
-        phase = .loading; engineReady = false; updateStatus("Starting local models…")
+        guard !suspending else { return }
+        let generation = engineGeneration
+        engineReady = false
+        if phase == .loading || phase == .idle { updateStatus("Starting local models…") }
+        startCorrection()
         do {
             try await transcriber.prepare()
-            engineReady = true; phase = .idle; hotkey.setPhase(.idle)
+            guard generation == engineGeneration, !Task.isCancelled else { return }
+            engineReady = true; state.ready(); syncHotkey()
             lastPermissionState = nil
-            refreshPermissions()
-            startCorrection()
+            refreshPermissions(); suspendEnginesIfIdle()
         } catch {
-            phase = .idle; hotkey.setPhase(.idle); updateStatus(error.localizedDescription)
+            guard generation == engineGeneration else { return }
+            state.ready(); syncHotkey(); updateStatus(error.localizedDescription)
+            suspendEnginesIfIdle()
         }
     }
 
     private func startCorrection() {
-        guard correctionTask == nil else { return }
+        guard correctionTask == nil, !suspending, !isTerminating else { return }
+        correctionGeneration &+= 1
+        let generation = correctionGeneration
         correctionTask = Task { [weak self] in
             guard let self else { return }
-            defer { correctionTask = nil; updateSetupStatus() }
+            defer {
+                if generation == correctionGeneration { correctionTask = nil; updateSetupStatus() }
+            }
             do {
-                try await correctionService.start()
-                await cleanup.preload()
-                correctionReady = await cleanup.isAvailable()
-                correctionStatus = correctionReady ? "Correction: ready" : "Correction unavailable; original transcript will be used"
+                try await correctionService.start(); try Task.checkCancellation()
+                await cleanup.preload(); try Task.checkCancellation()
+                let available = await cleanup.isAvailable(); try Task.checkCancellation()
+                guard generation == correctionGeneration, !suspending else { return }
+                correctionReady = available
+                correctionStatus = available ? "Correction: ready" : "Correction unavailable; original transcript will be used"
             } catch {
+                guard generation == correctionGeneration, !Task.isCancelled else { return }
                 correctionReady = false
                 correctionStatus = "Correction: \(error.localizedDescription)"
             }
-            // Do not erase insertion errors or a result waiting to be copied.
             if phase == .idle, !recoveryNeeded, status.hasPrefix("Ready") {
                 lastPermissionState = permissionStatus
                 updateStatus(permissionStatus)
@@ -169,12 +203,18 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         if FnHotkey.permissionGranted && !monitoring {
             monitoring = hotkey.start { [weak self] action in
-                switch action { case .start: self?.startDictation(); case .stop: self?.finishDictation() }
+                switch action {
+                case .start: self?.startDictation()
+                case .stop: self?.finishDictation()
+                case .placePending: self?.placePending()
+                case .resolvePending: self?.showPending("Insert, copy, or discard your previous text")
+                }
             }
-            hotkey.setPhase(phase == .listening ? .listening : (phase == .idle ? .idle : .processing))
+            syncHotkey()
         }
-        if !allPermissions && (phase == .listening || phase == .processing) {
-            cancelDictation(); updateStatus("Permission changed · open Setup")
+        if !allPermissions && phase == .listening {
+            // Keep the audio already captured. Placement will wait for setup.
+            finishDictation()
         }
         // Refresh on readiness changes without erasing errors or copy-recovery
         // messages on every timer tick. Partial grants also change this value.
@@ -188,111 +228,345 @@ final class AppController: NSObject, NSApplicationDelegate {
         updateSetupStatus()
     }
 
+    private func syncHotkey() {
+        switch phase {
+        case .idle: hotkey.setPhase(.idle)
+        case .listening: hotkey.setPhase(.listening)
+        case .pending: hotkey.setPhase(.pending)
+        case .loading, .processing: hotkey.setPhase(.processing)
+        }
+    }
+
+    private func configureHUD() {
+        hud.onCancel = { [weak self] in self?.cancelDictation() }
+        hud.onCopy = { [weak self] in self?.copyLast() }
+        hud.onDiscard = { [weak self] in self?.discardPending() }
+        recorder.onLevel = { [weak self] level in self?.hud.updateLevel(level) }
+        hotkey.onInputActivity = { [weak self] in self?.inserter.invalidateCapture() }
+        inserter.onFocusChanged = { [weak self] in self?.hotkey.invalidateGesture() }
+    }
+
     private func startDictation() {
-        guard phase == .idle, engineReady, allPermissions, monitoring else {
-            hotkey.setPhase(phase == .idle ? .idle : .processing)
-            updateStatus(engineReady ? permissionStatus : "Local models are not ready · open Setup")
+        if state.pendingText != nil { showPending(); return }
+        guard phase == .idle, allPermissions, monitoring, !suspending, !copyInProgress else {
+            syncHotkey()
+            updateStatus(suspending ? "Local models are resting · try again shortly" : permissionStatus)
             if !allPermissions { showSetup() }
             return
         }
+        let originalPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let token = state.begin() else { return }
+        metrics.begin(token); dismissTask?.cancel()
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
+        hud.show(.starting, on: screen); metrics.mark("indicatorRequested", token)
         do {
-            let destination = try inserter.captureTarget()
-            try recorder.start()
-            session = UUID(); target = destination; lastText = nil; recoveryNeeded = false; phase = .listening
-            hotkey.setPhase(.listening)
-            updateStatus(destination.canInsertAutomatically ? "Listening · tap Fn to finish" : "Listening · result will be available to copy")
+            // Audio starts before any field text or editor ancestry is read.
+            try recorder.start(); metrics.mark("microphoneReady", token)
+            let anchor = originalPID.flatMap { inserter.beginCapture(expectedProcessIdentifier: $0) }
+            targetTask = Task { [inserter] in
+                guard let anchor else { return nil }
+                return try? await inserter.inspect(anchor)
+            }
+            syncHotkey(); hud.show(.listening)
+            updateStatus("Listening · tap Fn to finish")
+            if !engineReady {
+                let generation = engineGeneration
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.transcriber.rewarm()
+                        if generation == self.engineGeneration { self.engineReady = true }
+                    } catch {
+                        if generation == self.engineGeneration { self.engineReady = false }
+                    }
+                }
+            }
+            if !correctionReady { startCorrection() }
             listeningTimer?.invalidate()
             listeningTimer = Timer(timeInterval: 115, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.finishDictation() }
             }
             RunLoop.main.add(listeningTimer!, forMode: .common)
-        } catch { hotkey.setPhase(.idle); updateStatus(error.localizedDescription) }
+        } catch {
+            state.finish(token); syncHotkey(); metrics.finish("microphoneFailed", token)
+            updateStatus(error.localizedDescription); hud.show(.error, message: error.localizedDescription)
+            dismissHUD(after: 5, for: token)
+        }
     }
 
     private func finishDictation() {
-        guard phase == .listening, let destination = target else { return }
+        guard phase == .listening else { return }
         listeningTimer?.invalidate(); listeningTimer = nil
         let token = session
+        metrics.mark("stopped", token)
         do {
             let audio = try recorder.stop()
-            phase = .processing; hotkey.setPhase(.processing); updateStatus("Transcribing locally…")
+            guard state.process(token) else { return }
+            syncHotkey(); updateStatus("Transcribing locally…"); hud.show(.transcribing)
+            let capture = targetTask
             processingTask = Task { [weak self] in
                 guard let self, token == session, !Task.isCancelled else { return }
+                var recoverable: String?
                 do {
-                    try Task.checkCancellation()
                     let raw = try await transcriber.transcribe(audio.samples)
                     guard token == session, !Task.isCancelled else { return }
-                    if raw.isEmpty { complete("No speech detected"); return }
-                    lastText = raw
-                    var result = raw, correctionFailure: String?
+                    engineReady = true
+                    metrics.mark("transcribed", token)
+                    if raw.isEmpty { finishWithoutText("No speech detected", token: token); return }
+                    recoverable = raw
+                    var result = raw, usedOriginal = false
                     if correctionReady {
-                        updateStatus("Correcting locally…")
+                        updateStatus("Correcting locally…"); hud.show(.correcting)
                         do { result = try await cleanup.clean(raw) }
-                        catch { correctionFailure = error.localizedDescription }
+                        catch { usedOriginal = true }
                     } else {
-                        correctionFailure = "Correction unavailable; original transcript used"
-                        startCorrection()
+                        usedOriginal = true; startCorrection()
                     }
                     guard token == session, !Task.isCancelled else { return }
-                    lastText = result
-                    guard destination.canInsertAutomatically else {
-                        recoveryNeeded = true
-                        complete("Text ready · use Copy last result for this app")
-                        return
+                    metrics.mark("corrected", token); recoverable = result
+                    guard let destination = await capture?.value, destination.canInsertAutomatically else {
+                        hold(result, token: token); return
                     }
-                    updateStatus("Inserting text…")
-                    let insertion = try await inserter.insert(text: result, into: destination)
-                    guard token == session, !Task.isCancelled else { return }
-                    if insertion == .sentWithoutVerification {
-                        recoveryNeeded = true
-                        complete("Paste sent · check the text box; result available to copy")
-                    } else if let warning = audio.warning {
-                        complete("Inserted captured speech · \(warning)")
-                    } else if let correctionFailure {
-                        complete("Inserted original transcript · \(correctionFailure)")
-                    } else { complete(permissionStatus) }
+                    try Task.checkCancellation()
+                    guard token == session else { return }
+                    deliver(result, into: destination, token: token,
+                            note: audio.warning ?? (usedOriginal ? "Original transcript used" : nil))
                 } catch {
                     guard token == session, !Task.isCancelled else { return }
-                    recoveryNeeded = lastText != nil
-                    complete(error.localizedDescription)
+                    if let recoverable { hold(recoverable, token: token) }
+                    else { finishWithoutText(error.localizedDescription, token: token) }
                 }
             }
-        } catch { complete(error.localizedDescription) }
+        } catch { finishWithoutText(error.localizedDescription, token: token) }
     }
 
-    private func complete(_ message: String) {
-        phase = .idle; target = nil; hotkey.setPhase(.idle); updateStatus(message)
+    private func hold(_ text: String, token: UUID) {
+        guard state.hold(text, for: token) else { return }
+        recoveryNeeded = true; processingTask = nil; targetTask = nil
+        metrics.finish("waitingForPlacement", token); showPending()
+        suspendEnginesIfIdle()
+    }
+
+    private func showPending(_ message: String = "Text ready · click a text box, then tap Fn once") {
+        guard state.pendingText != nil else { return }
+        dismissTask?.cancel(); syncHotkey(); updateStatus(message)
+        hud.show(.ready, message: message)
+    }
+
+    private func placePending() {
+        guard phase == .pending, let text = state.pendingText else { syncHotkey(); return }
+        guard !copyInProgress else { showPending("Finishing clipboard copy…"); return }
+        guard allPermissions, monitoring else { showPending("Text saved · finish permission setup to place it"); return }
+        guard let token = state.beginPlacement() else { return }
+        metrics.begin(token)
+        syncHotkey(); updateStatus("Checking destination…"); hud.show(.inserting)
+        let anchor = inserter.beginCapture()
+        processingTask = Task { [weak self] in
+            guard let self else { return }
+            guard let anchor, let destination = try? await inserter.inspect(anchor), destination.canInsertAutomatically,
+                  token == session, !Task.isCancelled else {
+                if token == session { hold(text, token: token) }; return
+            }
+            deliver(text, into: destination, token: token, note: nil)
+        }
+    }
+
+    private func deliver(_ text: String, into destination: TextInserter.Target, token: UUID, note: String?) {
+        updateStatus("Inserting text…"); hud.show(.inserting)
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer { deliveryTasks.removeValue(forKey: token); suspendEnginesIfIdle() }
+            do {
+                let result = try await inserter.insert(text: text, into: destination, onDispatched: { [weak self] in
+                    guard let self, state.didDispatch(text, for: token) else { return }
+                    metrics.mark("dispatched", token); metrics.mark("nextCaptureReady", token)
+                    processingTask = nil; targetTask = nil; recoveryNeeded = false
+                    syncHotkey(); updateStatus("Paste sent · double-tap Fn for another dictation")
+                    hud.show(.pasteSent)
+                }, onVerified: { [weak self] in self?.metrics.mark("verifiedVisible", token) })
+                let current = state.finishDelivery(token)
+                metrics.finish(result == .verified ? "verified" : "sentUnverified", token)
+                guard current else { return }
+                if result == .sentWithoutVerification {
+                    recoveryNeeded = true
+                    updateStatus("Paste sent · check the text box; Copy last result is available")
+                    hud.show(.pasteSent, message: "Paste sent · check the text box")
+                    dismissHUD(after: 5, for: token)
+                } else {
+                    updateStatus(note.map { "Inserted · \($0)" } ?? permissionStatus)
+                    hud.show(.inserted, message: note.map { "Inserted · \($0)" })
+                    dismissHUD(after: 1.5, for: token)
+                }
+            } catch {
+                // Cancellation before dispatch preserves an explicitly waiting
+                // result. Once dispatched, TextInserter completes its lease.
+                guard token == session, !Task.isCancelled else { return }
+                hold(text, token: token)
+            }
+        }
+        deliveryTasks[token] = task
+        processingTask = task
+    }
+
+    private func finishWithoutText(_ message: String, token: UUID) {
+        guard state.finish(token) else { return }
+        processingTask = nil; targetTask = nil; syncHotkey()
+        metrics.finish("noResult", token); updateStatus(message)
+        hud.show(.error, message: message); dismissHUD(after: 4, for: token)
+        suspendEnginesIfIdle()
+    }
+
+    private func dismissHUD(after seconds: Double, for token: UUID) {
+        dismissTask?.cancel()
+        dismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.session == token, self.phase == .idle else { return }
+            self.hud.hide()
+        }
     }
 
     @objc private func cancelDictation() {
-        session = UUID(); processingTask?.cancel(); processingTask = nil
-        transcriber.cancel()
+        guard phase == .listening || phase == .processing else { return }
+        let canceled = session
+        processingTask?.cancel(); processingTask = nil; targetTask?.cancel(); targetTask = nil
+        state.cancel(); engineGeneration &+= 1; engineReady = false; transcriber.cancel()
         listeningTimer?.invalidate(); listeningTimer = nil; recorder.cancel()
-        complete("Canceled · double-tap Fn when ready")
+        metrics.finish("canceled", canceled); syncHotkey()
+        if state.pendingText != nil { showPending() }
+        else { updateStatus("Canceled · double-tap Fn when ready"); hud.hide() }
+        if releaseEnginesWhenIdle { suspendEnginesIfIdle() }
+        else {
+            let generation = engineGeneration
+            Task { [weak self] in
+                guard let self, !self.isTerminating, !self.suspending,
+                      !self.releaseEnginesWhenIdle, generation == self.engineGeneration else { return }
+                do {
+                    try await self.transcriber.rewarm()
+                    guard generation == self.engineGeneration, !Task.isCancelled else { return }
+                    self.engineReady = true; self.suspendEnginesIfIdle()
+                } catch {}
+            }
+        }
     }
 
     @objc private func copyLast() {
-        if let lastText { inserter.copyForRecovery(text: lastText); recoveryNeeded = false; updateStatus("Copied last result") }
+        guard !copyInProgress, phase == .idle || phase == .pending,
+              let text = state.pendingText ?? lastText else { return }
+        let token = session
+        copyInProgress = true; updateStatus("Finishing clipboard copy…")
+        Task { [weak self] in
+            guard let self else { return }
+            // A previous editor may not have consumed its dispatched paste yet.
+            await inserter.waitForPendingPaste()
+            copyInProgress = false
+            guard token == session, !isTerminating else { return }
+            inserter.copyForRecovery(text: text)
+            if state.pendingText != nil { state.resolvePending(copied: true) }
+            recoveryNeeded = false; syncHotkey(); updateStatus("Copied · paste wherever you need it")
+            hud.hide(); suspendEnginesIfIdle()
+        }
+    }
+
+    @objc private func discardPending() {
+        guard phase == .pending else { return }
+        state.resolvePending(copied: false); recoveryNeeded = false
+        syncHotkey(); hud.hide(); updateStatus(permissionStatus); suspendEnginesIfIdle()
+    }
+
+    @objc private func exportMetrics() {
+        let panel = NSSavePanel(); panel.nameFieldStringValue = "Local-Dictation-performance.json"
+        panel.message = "Timing measurements only. No audio, dictated text, or application names are included."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try metrics.export().write(to: url, options: .atomic) }
+        catch { updateStatus("Could not export measurements: \(error.localizedDescription)") }
+    }
+
+    private func configureLifecycle() {
+        let center = NSWorkspace.shared.notificationCenter
+        lifecycleObservers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.sleeping = true
+                if self.phase == .listening { self.finishDictation() }
+                self.suspendEnginesIfIdle()
+            }
+        })
+        lifecycleObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.sleeping = false
+                if self.suspending { self.wakeRequested = true; return }
+                guard !self.memoryPressure else { return }
+                if !self.engineReady { await self.prepareEngines() }
+                else { self.startCorrection() }
+            }
+        })
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let events = self.pressureSource?.data else { return }
+                self.memoryPressure = !events.contains(.normal)
+                self.suspendEnginesIfIdle()
+            }
+        }
+        source.resume(); pressureSource = source
+    }
+
+    private func suspendEnginesIfIdle() {
+        guard releaseEnginesWhenIdle, !suspending, phase == .idle || phase == .pending || phase == .loading else { return }
+        guard engineReady || correctionReady || correctionTask != nil || phase == .loading else { return }
+        suspending = true; engineReady = false; correctionReady = false
+        engineGeneration &+= 1; correctionGeneration &+= 1
+        correctionTask?.cancel(); correctionTask = nil
+        Task { [weak self] in
+            guard let self else { return }
+            await transcriber.suspend(); await correctionService.suspend()
+            suspending = false; state.ready(); syncHotkey()
+            correctionStatus = "Models resting · reload on next dictation"
+            if wakeRequested {
+                wakeRequested = false
+                if !releaseEnginesWhenIdle { await prepareEngines() }
+            } else if phase == .idle { updateStatus(permissionStatus) }
+        }
     }
 
     @objc private func quitApp() { NSApp.terminate(nil) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if isTerminating { return .terminateLater }
-        guard inserter.hasPendingPaste else { return .terminateNow }
+        var copyOnQuit: String?
+        if state.pendingText != nil {
+            let alert = NSAlert()
+            alert.messageText = "Keep your waiting dictation?"
+            alert.informativeText = "This text is held only in memory. Copy it before quitting, or discard it."
+            alert.addButton(withTitle: "Copy and Quit")
+            alert.addButton(withTitle: "Discard and Quit")
+            alert.addButton(withTitle: "Cancel")
+            let answer = alert.runModal()
+            if answer == .alertThirdButtonReturn { return .terminateCancel }
+            if answer == .alertFirstButtonReturn { copyOnQuit = state.pendingText }
+        }
+        guard inserter.hasPendingPaste else {
+            if let copyOnQuit { inserter.copyForRecovery(text: copyOnQuit) }
+            return .terminateNow
+        }
         isTerminating = true
         processingTask?.cancel(); hotkey.stop(); timer?.invalidate()
-        phase = .processing; updateStatus("Restoring clipboard before quitting…")
+        updateStatus("Restoring clipboard before quitting…")
         Task { @MainActor in
             await inserter.waitForPendingPaste()
+            if let copyOnQuit { inserter.copyForRecovery(text: copyOnQuit) }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        timer?.invalidate(); listeningTimer?.invalidate(); hotkey.stop()
-        processingTask?.cancel(); correctionTask?.cancel(); recorder.cancel(); transcriber.shutdown(); correctionService.stop()
+        timer?.invalidate(); listeningTimer?.invalidate(); hotkey.stop(); dismissTask?.cancel()
+        pressureSource?.cancel()
+        for observer in lifecycleObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        processingTask?.cancel(); targetTask?.cancel(); correctionTask?.cancel()
+        recorder.cancel(); transcriber.shutdown(); correctionService.stop()
     }
 
     @objc private func showSetup() {
@@ -304,7 +578,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         stack.translatesAutoresizingMaskIntoConstraints = false
         let title = NSTextField(labelWithString: "Speak into any text box")
         title.font = .systemFont(ofSize: 23, weight: .semibold); stack.addArrangedSubview(title)
-        let subtitle = NSTextField(wrappingLabelWithString: "Click a text box. Double-tap Fn / Globe to start. Tap again to finish and insert corrected text.")
+        let subtitle = NSTextField(wrappingLabelWithString: "Click a text box. Double-tap Fn / Globe to start. Tap again to finish. If you click away, your text waits: select a text box and tap Fn once to place it.")
         subtitle.font = .systemFont(ofSize: 14); stack.addArrangedSubview(subtitle)
         let permissions = NSStackView(); permissions.orientation = .horizontal; permissions.spacing = 8
         for (label, action) in [("Microphone", #selector(allowMicrophone)), ("Accessibility", #selector(allowAccessibility)), ("Input Monitoring", #selector(allowMonitoring))] {
@@ -364,9 +638,11 @@ final class AppController: NSObject, NSApplicationDelegate {
                 let phrases = ["Let's meet on Thursday, sorry, Friday at three.",
                     "I need to send, um, send the document tomorrow.",
                     "The total is fifteen, actually fifty dollars.",
-                    "Do not delete the file. Send it to Yosef tomorrow."]
+                    "Do not delete the file. Send it to Yosef tomorrow.",
+                    "Add 3, I mean 2 items to the list."]
                 let expected = ["Let's meet on Friday at three.", "I need to send the document tomorrow.",
-                    "The total is fifty dollars.", "Do not delete the file. Send it to Yosef tomorrow."]
+                    "The total is fifty dollars.", "Do not delete the file. Send it to Yosef tomorrow.",
+                    "Add 2 items to the list."]
                 await cleanup.preload()
                 for (index, phrase) in phrases.enumerated() {
                     let started = Date()

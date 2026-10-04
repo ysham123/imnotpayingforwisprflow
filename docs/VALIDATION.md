@@ -1,6 +1,6 @@
 # Release validation
 
-This records the v1.1.1 patch's fixture results and live checks, and preserves the historical v1.1.0 release evidence. It is not a promise of compatibility with every macOS text editor.
+This records v1.2 validation and preserves the historical v1.1.1/v1.1.0 evidence. It is not a promise of compatibility with every macOS text editor.
 
 ## Environment
 
@@ -8,6 +8,41 @@ This records the v1.1.1 patch's fixture results and live checks, and preserves t
 - Swift 5.10 and Command Line Tools.
 - whisper.cpp 1.8.3 with Metal, Whisper large-v3-turbo Q8_0.
 - Ollama 0.9.6 and Qwen3 4B Q4_K_M.
+
+## v1.2 candidate validation
+
+The release executable compiles with Swift 5.10. A complete candidate bundle has passed model integrity checks and strict code-signature verification. Its bundled models and native recognition settings are unchanged.
+
+| Area | Result |
+|---|---|
+| Fn gestures | 30 regressions, including delayed pending placement, double-tap refusal, interruption, and synthetic paste events |
+| Session state and timing export | Protected pending results, new capture before prior delivery completes, stale receipts, cancellation, discard, and content-free JSON passed |
+| Correction validation | 32 existing conservative-cleanup cases passed |
+| Owned-service caching | 9 metadata, ownership, invalidation, retention, and unload checks passed |
+| Correction lifecycle | 4 shared-start, bounded-shutdown, immediate-rewarm, and canceled-start recovery checks passed |
+| Audio | 8 conversion, recovery, and microphone-level checks passed |
+| Transcriber | 6 cancellation/recovery and 5 worker-fault cases passed |
+| Native insertion | 15 groups passed, including pinned identity capture, off-main inspection, away-and-return invalidation, queued delivery and cancellation |
+| WebKit insertion | 16 cases passed, including async pinned input/rich-editor capture and explicit placement |
+| Electron insertion | Final run pending |
+| Floating indicator | 5 focus/control checks passed with the final button appearance |
+| Packaging/installer | 4 package rollback and 8 installer failure/replacement checks passed; these fault tests mock signing |
+
+The identity anchor reads no field text. Full target inspection runs on a serial worker with request-local deadlines. A paste dispatch releases recording readiness, while the clipboard lease and insertion observation continue separately. The delivery fixture waits for the first insertion to be observed before moving its field, still within the clipboard read window; it does not claim that a posted global keyboard event is synchronously consumed.
+
+UI fixtures verify nonactivation across all nine HUD states and actual action-button clicks preserving an external synthetic editor's focus and caret. Multi-display geometry is bounded to the selected screen. Physical Fn use, six-app compatibility, full-screen Spaces, and VoiceOver still require installed-candidate live checks; the previous release's user reports below do not validate v1.2.
+
+### Performance evidence
+
+Content-free interaction measurements are kept only in memory and exported explicitly. `indicatorRequested` measures when AppKit was asked to show the panel, not when the display physically presented it. `verifiedVisible` is the first observed Accessibility insertion; an editor may visibly update earlier. Stop-to-dispatch, observed insertion, and next-capture readiness are reported separately.
+
+A preliminary ten-round read-only check of the existing correction service measured `/api/tags` at a 0.68 ms median and `/api/show` at 35.28 ms. This establishes a modest metadata overhead, not a full dictation speedup. Complete baseline/candidate model measurements are pending an exclusive model window. The 100 ms visible-feedback goal is not yet verified.
+
+### Remaining release gates
+
+- Complete final Electron/HUD runs and full model comparison.
+- Install and test the candidate's physical Fn and explicit placement flow in real applications.
+- Verify the generated split release through the real offline installer before publishing stable v1.2.
 
 ## v1.1.1 insertion and live checks
 

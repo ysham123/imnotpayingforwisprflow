@@ -10,8 +10,14 @@ final class FnHotkey {
     private var runLoopSource: CFRunLoopSource?
     private var onAction: ((HotkeyGesture.Action) -> Void)?
     private var generation: UInt64 = 0
+    private var pendingTimer: Timer?
+    private var activationObserver: NSObjectProtocol?
+    /// Physical input only; synthetic paste events must not change target epochs.
+    var onInputActivity: (() -> Void)?
 
     deinit {
+        pendingTimer?.invalidate()
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
         if let runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         }
@@ -44,6 +50,10 @@ final class FnHotkey {
 
         let mask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
             | (CGEventMask(1) << CGEventType.keyDown.rawValue)
+            | (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.rightMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.otherMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.scrollWheel.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -65,11 +75,20 @@ final class FnHotkey {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.invalidateGesture() }
+        }
         return true
     }
 
     func stop() {
         generation &+= 1
+        pendingTimer?.invalidate()
+        pendingTimer = nil
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+        activationObserver = nil
         if let runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         }
@@ -85,6 +104,42 @@ final class FnHotkey {
 
     func setPhase(_ phase: HotkeyGesture.Phase) {
         gesture.setPhase(phase, at: ProcessInfo.processInfo.systemUptime)
+        schedulePendingAction()
+    }
+
+    func invalidateGesture() {
+        gesture.invalidate()
+        pendingTimer?.invalidate()
+        pendingTimer = nil
+    }
+
+    private func schedulePendingAction() {
+        pendingTimer?.invalidate()
+        pendingTimer = nil
+        guard let deadline = gesture.pendingActionDeadline else { return }
+        let expectedGeneration = generation
+        let timer = Timer(timeInterval: max(0.001, deadline - ProcessInfo.processInfo.systemUptime),
+                          repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.generation == expectedGeneration else { return }
+                self.pendingTimer = nil
+                // An event-tap callback queues its work on the main actor. A
+                // boundary-time second press can precede that queued callback;
+                // never place while Fn or another shortcut modifier is held.
+                let held = CGEventSource.flagsState(.combinedSessionState)
+                let modifiers: CGEventFlags = [.maskSecondaryFn, .maskCommand, .maskControl, .maskAlternate, .maskShift]
+                if !held.intersection(modifiers).isEmpty {
+                    self.invalidateGesture()
+                    return
+                }
+                if let action = self.gesture.advance(at: ProcessInfo.processInfo.systemUptime) {
+                    self.onAction?(action)
+                }
+                self.schedulePendingAction()
+            }
+        }
+        pendingTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func process(
@@ -92,20 +147,32 @@ final class FnHotkey {
         keyCode: Int64,
         flags: CGEventFlags,
         at time: TimeInterval,
+        isPhysical: Bool,
         generation expectedGeneration: UInt64
     ) {
         guard generation == expectedGeneration, eventTap != nil else { return }
-        guard type == .flagsChanged || type == .keyDown else { return }
+        guard type == .flagsChanged || type == .keyDown else {
+            if isPhysical {
+                invalidateGesture()
+                onInputActivity?()
+            }
+            return
+        }
+        let interruptionsBefore = gesture.interruptionCount
         let companions: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
         let action = gesture.handle(type == .flagsChanged ? .flagsChanged : .keyDown,
                                     keyCode: keyCode, functionDown: flags.contains(.maskSecondaryFn),
                                     otherModifiersHeld: !flags.intersection(companions).isEmpty,
-                                    at: time)
+                                    at: time, isPhysical: isPhysical)
+        if isPhysical, gesture.interruptionCount != interruptionsBefore { onInputActivity?() }
         if let action { onAction?(action) }
+        schedulePendingAction()
     }
 
     private func recoverDisabledTap(generation expectedGeneration: UInt64) {
         guard generation == expectedGeneration, let eventTap else { return }
+        invalidateGesture()
+        onInputActivity?()
         // Missing a key-up while disabled must not leave a partial gesture.
         let phase = gesture.phase
         gesture = FnKeyEventMapper(doubleTapInterval: NSEvent.doubleClickInterval)
@@ -121,6 +188,7 @@ final class FnHotkey {
         let time = Double(event.timestamp) / 1_000_000_000
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+        let isPhysical = event.getIntegerValueField(.eventSourceUnixProcessID) == 0
 
         // The callback executes on the main run loop, preserving FIFO delivery
         // and allowing generation to invalidate queued events after stop().
@@ -130,7 +198,7 @@ final class FnHotkey {
                 owner.recoverDisabledTap(generation: currentGeneration)
             } else {
                 owner.process(type: type, keyCode: keyCode, flags: flags, at: time,
-                              generation: currentGeneration)
+                              isPhysical: isPhysical, generation: currentGeneration)
             }
         }
         return Unmanaged.passUnretained(event)

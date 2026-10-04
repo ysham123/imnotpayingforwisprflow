@@ -9,10 +9,23 @@ final class RefusingTextView: CountingTextView {
 }
 final class StagedReadTextView: CountingTextView {
     var actOnStagedValueRead: (() -> Void)?
+    var actOnNextValueRead: (() -> Void)?
+    var nextValueReadDelay: TimeInterval = 0
+    var valueReads = 0
     var stagedReadActions = 0
 
     override func accessibilityValue() -> String? {
+        valueReads += 1
         let value = super.accessibilityValue()
+        if let action = actOnNextValueRead {
+            actOnNextValueRead = nil
+            action()
+        }
+        if nextValueReadDelay > 0 {
+            let delay = nextValueReadDelay
+            nextValueReadDelay = 0
+            Thread.sleep(forTimeInterval: delay)
+        }
         // Arm only after target capture, and trigger only after the inserter
         // stages its clipboard item. Earlier validation must retain focus.
         if let action = actOnStagedValueRead,
@@ -95,10 +108,24 @@ final class StagedReadTextView: CountingTextView {
                     first.stagedReadActions = 0
                     first.actOnStagedValueRead = { first.setSelectedRange(NSRange(location: 0, length: 0)) }
                 }
+                if command["switchFocusOnNextValueRead"] as? Bool == true {
+                    first.actOnNextValueRead = { window.makeFirstResponder(second) }
+                }
+                if command["focusAwayAndReturnOnNextValueRead"] as? Bool == true {
+                    first.actOnNextValueRead = {
+                        window.makeFirstResponder(second)
+                        NSAccessibility.post(element: app, notification: .focusedUIElementChanged)
+                        window.makeFirstResponder(first)
+                        NSAccessibility.post(element: app, notification: .focusedUIElementChanged)
+                    }
+                }
+                if let delay = command["nextValueReadDelay"] as? Double { first.nextValueReadDelay = delay }
+                if command["resetValueReads"] as? Bool == true { first.valueReads = 0 }
                 let reply: [String: Any] = ["id": id, "token": token, "pid": ProcessInfo.processInfo.processIdentifier,
                     "values": views.map { $0.string }, "locations": views.map { $0.selectedRange().location },
                     "pasteCounts": views.map { $0.pasteCount }, "pasteKeyEvents": pasteKeyEvents,
                     "stagedReadActions": first.stagedReadActions,
+                    "valueReads": first.valueReads,
                     "active": app.isActive, "keyWindow": window.isKeyWindow,
                     "firstResponderIsField": field < views.count ? window.firstResponder === views[field] : window.firstResponder === secure]
                 try! JSONSerialization.data(withJSONObject: reply).write(to: directory.appendingPathComponent("reply.json"), options: .atomic)

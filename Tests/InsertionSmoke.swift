@@ -12,7 +12,7 @@ import AppKit
         setbuf(stdout, nil)
         app.setActivationPolicy(.prohibited)
         Task { @MainActor in
-            do { try await run(); print("Passed 13 native insertion/clipboard regressions"); exit(0) }
+            do { try await run(); print("Passed 15 native insertion/clipboard regression groups"); exit(0) }
             catch { fputs("INSERTION TEST FAILED: \(error)\n", stderr); exit(1) }
         }
         app.run()
@@ -175,16 +175,85 @@ import AppKit
         _ = try await external.value
         try check(board.string(forType: .string) == "external copy")
         print("PASS external clipboard ownership")
+        try await seed("anchor origin", location: 13)
+        inserter.primeFrontmostAccessibility()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = try await command(["resetValueReads": true, "nextValueReadDelay": 0.06])
+        guard let responsiveAnchor = inserter.beginCapture() else { throw NSError(domain: "Native identity anchor missing", code: 1) }
+        let identityReply = try await command([:])
+        try check(identityReply["valueReads"] as? Int == 0, "Identity anchor read field text")
+        var heartbeat = false
+        let pulse = Task { @MainActor in
+            try await Task.sleep(nanoseconds: 20_000_000)
+            heartbeat = true
+        }
+        let responsive = try await inserter.inspect(responsiveAnchor)
+        try check(responsive.canInsertAutomatically && heartbeat, "Full AX inspection blocked the main actor")
+        _ = try await pulse.value
+        print("PASS identity anchor reads no text and asynchronous inspection leaves main actor responsive")
+
+        try await seed("pinned origin", location: 13)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        guard let pinnedAnchor = inserter.beginCapture() else { throw NSError(domain: "Pinned anchor missing", code: 1) }
+        _ = try await command(["switchFocusOnNextValueRead": true])
+        do {
+            _ = try await inserter.inspect(pinnedAnchor)
+            throw NSError(domain: "Async inspection adopted a later field", code: 1)
+        } catch TextInserter.InsertionError.targetChanged { }
+        print("PASS asynchronous target inspection cannot adopt a later focused field")
+
+        try await seed("return origin", location: 13)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        guard let returnAnchor = inserter.beginCapture() else { throw NSError(domain: "Return anchor missing", code: 1) }
+        _ = try await command(["focusAwayAndReturnOnNextValueRead": true])
+        var returnedTarget: TextInserter.Target?
+        do { returnedTarget = try await inserter.inspect(returnAnchor) }
+        catch TextInserter.InsertionError.targetChanged { }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        if let returnedTarget {
+            do {
+                try await inserter.insert(text: "must not paste", into: returnedTarget)
+                throw NSError(domain: "Away-and-return focus retained original eligibility", code: 1)
+            } catch TextInserter.InsertionError.targetChanged { }
+        }
+        let returnedReply = try await command([:])
+        try check((returnedReply["values"] as! [String])[0] == "return origin")
+        try check((returnedReply["pasteCounts"] as! [Int])[0] == 0, "Away-and-return dispatched a paste")
+        print("PASS focus-away-return epoch invalidates the original target")
+
         try await seed("", location: 0)
         let firstTarget = try capture()
-        let pending = Task { @MainActor in try await inserter.insert(text: "one", into: firstTarget) }
-        try await Task.sleep(nanoseconds: 300_000_000)
-        pending.cancel()
-        do { try await inserter.insert(text: "two", into: firstTarget); throw NSError(domain: "Overlapping paste accepted", code: 1) } catch TextInserter.InsertionError.pasteInProgress { }
+        var dispatchOrder: [String] = [], verifiedCount = 0
+        let firstDelivery = Task { @MainActor in
+            try await inserter.insert(text: "one", into: firstTarget,
+                onDispatched: { dispatchOrder.append("one") }, onVerified: { verifiedCount += 1 })
+        }
+        let dispatchDeadline = Date().addingTimeInterval(3)
+        while dispatchOrder.isEmpty || verifiedCount == 0 {
+            try check(Date() < dispatchDeadline, "First delivery was not visibly received")
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        firstDelivery.cancel()
+        try await seed("", location: 0, field: 1)
+        let secondTarget = try capture()
+        let secondDelivery = Task { @MainActor in
+            try await inserter.insert(text: "two", into: secondTarget,
+                onDispatched: { dispatchOrder.append("two") }, onVerified: { verifiedCount += 1 })
+        }
+        let canceledDelivery = Task { @MainActor in try await inserter.insert(text: "never", into: secondTarget) }
+        try await Task.sleep(nanoseconds: 40_000_000)
+        canceledDelivery.cancel()
+        try check(dispatchOrder == ["one"], "Second delivery overwrote a live clipboard lease")
+        _ = try await firstDelivery.value
+        _ = try await secondDelivery.value
+        do { _ = try await canceledDelivery.value; throw NSError(domain: "Canceled queued delivery ran", code: 1) }
+        catch is CancellationError { }
         await inserter.waitForPendingPaste()
+        let orderedReply = try await command([:])
+        try check(dispatchOrder == ["one", "two"] && verifiedCount == 2, "Delivery callbacks repeated or reordered")
+        try check((orderedReply["values"] as! [String]).prefix(2).elementsEqual(["one", "two"]))
+        try check((orderedReply["pasteCounts"] as! [Int]).prefix(2).allSatisfy { $0 == 1 }, "Queued delivery repeated a paste")
         try check(!inserter.hasPendingPaste && board.string(forType: .string) == "external copy")
-        _ = try await pending.value
-        try check(board.string(forType: .string) == "external copy")
-        print("PASS cancellation restoration and overlapping transaction rejection")
+        print("PASS serialized deliveries, post-dispatch cancellation restoration, and canceled queued request")
     }
 }

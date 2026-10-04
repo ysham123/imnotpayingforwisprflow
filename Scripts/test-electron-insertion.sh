@@ -18,7 +18,7 @@ build_dir="$(cd "$build_dir" && pwd)"
 # ELECTRON_RUN_AS_NODE runs only the syntax checker and opens no GUI window.
 ELECTRON_RUN_AS_NODE=1 "$electron" --check "$source_dir/Tests/ElectronInsertionFixture.cjs"
 swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "$source_dir/Sources/LocalDictation/TextInserter.swift" \
+  "$source_dir/Sources/LocalDictation/TextInserter.swift" "$source_dir/Sources/LocalDictation/TargetInspector.swift" "$source_dir/Sources/LocalDictation/DeliveryCoordinator.swift" \
   "$source_dir/Tests/WebInsertionSmoke.swift" -o "$build_dir/web-insertion-smoke"
 if [ "$compile_only" == "--compile-only" ]; then exit 0; fi
 "$build_dir/web-insertion-smoke" --check-permission

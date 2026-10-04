@@ -39,7 +39,25 @@ import Foundation
         catch { }
         let recoveredAgain = try await engine.transcribe([0.3])
         precondition(recoveredAgain == "recognized speech")
-        print("Passed: pre-start cancellation, queued cancellation without restart, running cancellation, and recovery")
+        await engine.suspend()
+        try await engine.rewarm()
+        let afterSuspend = try await engine.transcribe([0.4])
+        precondition(afterSuspend == "recognized speech")
+
+        // Cancellation of a preparation queued behind an active request must
+        // not revive the old worker or leave unread bytes on the new pipe.
+        let request = Task { try await engine.transcribe([0.5]) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let stalePreparation = Task { try await engine.prepare() }
+        stalePreparation.cancel()
+        _ = try? await request.value
+        do { try await stalePreparation.value; fatalError("Canceled preparation succeeded") }
+        catch is CancellationError { }
+        try await engine.rewarm()
+        let afterStalePreparation = try await engine.transcribe([0.6])
+        precondition(afterStalePreparation == "recognized speech")
+        precondition(engine.lastTiming != nil)
+        print("Passed 6 cancellation/recovery scenarios, including suspend/rewarm and stale preparation")
     }
 
     static func waitFor(_ text: String, in log: URL) async throws {

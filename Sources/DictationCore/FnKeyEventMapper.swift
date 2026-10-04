@@ -10,6 +10,17 @@ public struct FnKeyEventMapper: Sendable {
     private let companionInterval: TimeInterval = 0.05
 
     public var phase: HotkeyGesture.Phase { gesture.phase }
+    public var pendingActionDeadline: TimeInterval? { gesture.pendingActionDeadline }
+    public private(set) var interruptionCount: UInt64 = 0
+
+    public mutating func advance(at time: TimeInterval) -> HotkeyGesture.Action? {
+        gesture.advance(at: time)
+    }
+
+    public mutating func invalidate() {
+        lastFnReleaseAt = nil
+        gesture.invalidate()
+    }
 
     public init(doubleTapInterval: TimeInterval = 0.5, maximumTapDuration: TimeInterval = 0.4) {
         gesture = HotkeyGesture(doubleTapInterval: doubleTapInterval,
@@ -24,7 +35,10 @@ public struct FnKeyEventMapper: Sendable {
 
     public mutating func handle(_ kind: EventKind, keyCode: Int64,
                                 functionDown: Bool, otherModifiersHeld: Bool,
-                                at time: TimeInterval) -> HotkeyGesture.Action? {
+                                at time: TimeInterval, isPhysical: Bool = true) -> HotkeyGesture.Action? {
+        // A previous paste may still be finishing while the user starts another
+        // dictation. Its synthetic Cmd-V must not cancel that user's Fn pair.
+        if !isPhysical, keyCode != 63, keyCode != 179 { return nil }
         if kind == .keyDown, keyCode == 179, !functionDown, !otherModifiersHeld,
            let releasedAt = lastFnReleaseAt,
            time >= releasedAt, time - releasedAt <= companionInterval {
@@ -44,6 +58,7 @@ public struct FnKeyEventMapper: Sendable {
         }
 
         lastFnReleaseAt = nil
+        interruptionCount &+= 1
         gesture.handleOtherKey()
         return nil
     }

@@ -12,7 +12,7 @@ build_dir="$(cd "$build_dir" && pwd)"
 swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
   "$source_dir/Tests/WebInsertionFixture.swift" -o "$build_dir/WebFixture"
 swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "$source_dir/Sources/LocalDictation/TextInserter.swift" \
+  "$source_dir/Sources/LocalDictation/TextInserter.swift" "$source_dir/Sources/LocalDictation/TargetInspector.swift" "$source_dir/Sources/LocalDictation/DeliveryCoordinator.swift" \
   "$source_dir/Tests/WebInsertionSmoke.swift" -o "$build_dir/web-insertion-smoke"
 if [ "$compile_only" == "--compile-only" ]; then exit 0; fi
 "$build_dir/web-insertion-smoke" --check-permission

@@ -1,15 +1,88 @@
 import Foundation
 
+/// Explicitly shared by clients of a server launched by this app. An arbitrary
+/// loopback server never acquires this lease merely by answering a health check.
+final class CorrectionServiceLease: @unchecked Sendable {
+    let endpoint: URL
+    private let lock = NSLock()
+    private var owner: Process?
+    private var generation: UInt64 = 0
+    private var validated: [String: (generation: UInt64, expires: TimeInterval)] = [:]
+
+    init(endpoint: URL) { self.endpoint = endpoint }
+
+    func activate(_ process: Process) {
+        lock.lock(); defer { lock.unlock() }
+        generation &+= 1; owner = process; validated.removeAll()
+    }
+
+    func invalidate() {
+        lock.lock(); defer { lock.unlock() }
+        generation &+= 1; owner = nil; validated.removeAll()
+    }
+
+    func invalidateMetadata() {
+        lock.lock(); defer { lock.unlock() }
+        generation &+= 1; validated.removeAll()
+    }
+
+    func current() -> UInt64? {
+        lock.lock(); defer { lock.unlock() }
+        guard owner?.isRunning == true else {
+            owner = nil; validated.removeAll(); return nil
+        }
+        return generation
+    }
+
+    func isCurrent(_ expected: UInt64) -> Bool { current() == expected }
+
+    func isValidated(_ model: String, generation expected: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard owner?.isRunning == true, generation == expected,
+              let entry = validated[model], entry.generation == expected else { return false }
+        return entry.expires > ProcessInfo.processInfo.systemUptime
+    }
+
+    func recordValidation(_ model: String, generation expected: UInt64) {
+        lock.lock(); defer { lock.unlock() }
+        guard owner?.isRunning == true, generation == expected else { return }
+        // A bounded lease also detects unexpected local model-store changes.
+        validated[model] = (expected, ProcessInfo.processInfo.systemUptime + 60)
+    }
+}
+
+private final class CleanupTimingStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: CleanupClient.Timing?
+    func set(_ timing: CleanupClient.Timing?) { lock.lock(); value = timing; lock.unlock() }
+    func get() -> CleanupClient.Timing? { lock.lock(); defer { lock.unlock() }; return value }
+}
+
 /// Optional correction using an already-installed model in a local Ollama service.
 /// The caller should retain the original transcript if correction fails.
 struct CleanupClient: Sendable {
+    struct Timing: Sendable {
+        let metadataSeconds: Double
+        let requestSeconds: Double
+        let validationSeconds: Double
+        let totalSeconds: Double
+        let loadSeconds: Double
+        let promptSeconds: Double
+        let generationSeconds: Double
+        let inputTokens: Int
+        let outputTokens: Int
+    }
     let baseURL: URL
     let model: String
     private let session: URLSession
+    private let ownedServiceLease: CorrectionServiceLease?
+    private let timingStore = CleanupTimingStore()
 
-    init(baseURL: URL = URL(string: "http://127.0.0.1:11434")!, model: String = "qwen3:4b") {
+    init(baseURL: URL = URL(string: "http://127.0.0.1:11434")!, model: String = "qwen3:4b",
+         ownedServiceLease: CorrectionServiceLease? = nil) {
         self.baseURL = baseURL
         self.model = model
+        self.ownedServiceLease = ownedServiceLease?.endpoint == baseURL ? ownedServiceLease : nil
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 20
@@ -20,20 +93,35 @@ struct CleanupClient: Sendable {
         session = URLSession(configuration: configuration, delegate: LocalOnlyRedirectDelegate(), delegateQueue: nil)
     }
 
+    var lastTiming: Timing? { timingStore.get() }
+
+    /// Only the app-owned service can be instructed to release its weights.
+    func unloadOwnedModel() async throws {
+        guard let lease = ownedServiceLease, let generation = lease.current() else { return }
+        defer { lease.invalidateMetadata() }
+        let reply = try await withDeadline(seconds: 3) {
+            try await self.request("generate", body: ["model": self.model, "keep_alive": 0, "stream": false])
+        }
+        try rejectRemoteMetadata(reply)
+        guard lease.isCurrent(generation), reply["done"] as? Bool == true else { throw CleanupError.serviceUnavailable }
+    }
+
     func isAvailable() async -> Bool {
         do {
-            try await withDeadline(seconds: 3) { try await self.requireLocalModel() }
+            _ = try await withDeadline(seconds: 3) { try await self.requireLocalModel() }
             return true
         } catch {
+            ownedServiceLease?.invalidateMetadata()
             return false
         }
     }
 
     func serviceStatus() async -> String {
         do {
-            try await withDeadline(seconds: 3) { try await self.requireLocalModel() }
+            _ = try await withDeadline(seconds: 3) { try await self.requireLocalModel() }
             return "Local correction ready (\(model))"
         } catch {
+            ownedServiceLease?.invalidateMetadata()
             return error.localizedDescription
         }
     }
@@ -53,8 +141,11 @@ struct CleanupClient: Sendable {
         guard source.count <= 1_500, source.utf8.count <= 4_000 else {
             throw CleanupError.inputTooLong
         }
-        return try await withDeadline(seconds: 20) {
-            try await self.requireLocalModel()
+        let started = ProcessInfo.processInfo.systemUptime
+        timingStore.set(nil)
+        do { return try await withDeadline(seconds: 20) {
+            let ownership = try await self.requireLocalModel()
+            let verified = ProcessInfo.processInfo.systemUptime
             let data = try JSONSerialization.data(withJSONObject: ["dictated_text": source], options: [.sortedKeys])
             guard let encodedSource = String(data: data, encoding: .utf8) else {
                 throw CleanupError.invalidResponse
@@ -67,7 +158,7 @@ struct CleanupClient: Sendable {
                 "model": self.model,
                 "system": Self.systemPrompt,
                 "prompt": "Correct the dictated_text value in the following JSON data. Return only the required JSON object.\n\(encodedSource)\n/no_think",
-                "stream": false, "think": false, "keep_alive": "10m",
+                "stream": false, "think": false, "keep_alive": ownership == nil ? "10m" as Any : -1 as Any,
                 "format": schema,
                 "options": ["num_ctx": 4096, "num_predict": 512, "temperature": 0]
             ]
@@ -91,6 +182,10 @@ struct CleanupClient: Sendable {
                 }
             }
             guard let reply else { throw CleanupError.incompatibleService }
+            if let ownership, self.ownedServiceLease?.isCurrent(ownership) != true {
+                throw CleanupError.serviceUnavailable
+            }
+            let generated = ProcessInfo.processInfo.systemUptime
             try self.rejectRemoteMetadata(reply)
             guard reply["done"] as? Bool == true,
                   let text = reply["response"] as? String,
@@ -110,7 +205,20 @@ struct CleanupClient: Sendable {
                   let corrected = object["cleaned_text"] as? String else {
                 throw CleanupError.invalidResponse
             }
-            return try Self.validate(corrected, against: source)
+            let result = try Self.validate(corrected, against: source)
+            let finished = ProcessInfo.processInfo.systemUptime
+            func seconds(_ key: String) -> Double { (reply[key] as? NSNumber)?.doubleValue ?? 0 }
+            self.timingStore.set(Timing(metadataSeconds: verified - started, requestSeconds: generated - verified,
+                validationSeconds: finished - generated, totalSeconds: finished - started,
+                loadSeconds: seconds("load_duration") / 1_000_000_000,
+                promptSeconds: seconds("prompt_eval_duration") / 1_000_000_000,
+                generationSeconds: seconds("eval_duration") / 1_000_000_000,
+                inputTokens: (reply["prompt_eval_count"] as? Int) ?? 0,
+                outputTokens: (reply["eval_count"] as? Int) ?? 0))
+            return result
+        } } catch {
+            ownedServiceLease?.invalidateMetadata()
+            throw error
         }
     }
 
@@ -134,13 +242,16 @@ struct CleanupClient: Sendable {
     Return exactly one JSON object with exactly one string key, cleaned_text. No Markdown fences, commentary, reasoning, or additional keys.
     """
 
-    private func requireLocalModel() async throws {
+    @discardableResult
+    private func requireLocalModel() async throws -> UInt64? {
         _ = try endpoint("tags")
         guard !model.isEmpty, !model.contains(where: { $0.isWhitespace }),
               !model.lowercased().contains("cloud") else { throw CleanupError.nonLocalModel }
+        let ownership = ownedServiceLease?.current()
+        let requested = Self.canonicalModel(model)
+        if let ownership, ownedServiceLease?.isValidated(requested, generation: ownership) == true { return ownership }
         let tags = try await request("tags")
         guard let entries = tags["models"] as? [[String: Any]] else { throw CleanupError.invalidResponse }
-        let requested = Self.canonicalModel(model)
         guard let entry = entries.first(where: {
             Self.canonicalModel($0["name"] as? String ?? $0["model"] as? String ?? "") == requested
         }) else { throw CleanupError.missingModel(model) }
@@ -157,6 +268,11 @@ struct CleanupClient: Sendable {
            !capabilities.isEmpty, !capabilities.contains("completion") {
             throw CleanupError.incompatibleModel
         }
+        if let ownership {
+            guard ownedServiceLease?.isCurrent(ownership) == true else { throw CleanupError.serviceUnavailable }
+            ownedServiceLease?.recordValidation(requested, generation: ownership)
+        }
+        return ownership
     }
 
     private static func canonicalModel(_ value: String) -> String {

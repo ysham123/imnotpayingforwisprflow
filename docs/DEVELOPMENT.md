@@ -49,7 +49,10 @@ These checks need macOS developer tools, but do not need model downloads, microp
 
 ```bash
 bash Scripts/test-core.sh
+bash Scripts/test-session.sh
 bash Scripts/test-cleanup.sh
+bash Scripts/test-cleanup-service.sh
+bash Scripts/test-correction-lifecycle.sh
 bash Scripts/test-audio.sh
 bash Scripts/test-transcriber.sh
 bash Scripts/test-worker-faults.sh
@@ -63,6 +66,7 @@ Insertion checks require an interactive desktop and Accessibility permission for
 
 ```bash
 bash Scripts/test-insertion.sh
+bash Scripts/test-hud.sh
 bash Scripts/test-web-insertion.sh
 # Optional Chromium coverage: supply an official arm64 Electron executable.
 bash Scripts/test-electron-insertion.sh \
@@ -81,12 +85,31 @@ For a complete installed runtime, quit the normal app and run:
 
 Diagnostics check model startup, correction examples, and silence. Add `--audio /path/to/synthetic-speech.wav` to measure transcription and cleanup of a supplied test file. These diagnostics print their synthetic text to the terminal. They do not verify physical Fn presses or insertion into a particular third-party editor.
 
+## Measure performance
+
+The menu action **Export performance measurements…** saves numeric timing and outcome data from the last 100 sessions in memory. It includes microphone readiness, transcription/correction completion, paste dispatch, first observed insertion, and readiness for another capture when each stage is available. It excludes dictated text, audio, and application names. A dispatched paste and a verified visible insertion are separate measurements.
+
+Run backend benchmarks with a synthetic audio fixture after quitting the normal app:
+
+```bash
+bash Scripts/benchmark-backend.sh \
+  "/Applications/Local Dictation.app/Contents/Resources" \
+  /path/to/synthetic-speech.wav /tmp/v1.2-benchmark.json 20 2
+# Repeat against the preceding release's source for comparison:
+bash Scripts/benchmark-backend.sh \
+  "/Applications/Local Dictation.app/Contents/Resources" \
+  /path/to/synthetic-speech.wav /tmp/v1.1-benchmark.json 20 2 v1.1.1
+```
+
+The harness uses an isolated loopback service and reports numeric results without transcripts. The fourth argument is repetitions; the fifth is idle seconds. Use more than 600 seconds to exercise the older model-retention timeout. Short idle measurements do not establish performance after that timeout. Backend benchmarks exclude microphone capture and editor delivery; use the interactive exporter for those stages.
+
 ## Source map
 
 | Location | Responsibility |
 |---|---|
-| `Sources/DictationCore/` | Fn gesture state machine |
+| `Sources/DictationCore/` | Fn gestures and protected dictation session state |
 | `Sources/LocalDictation/AppMain.swift` | Menu, setup, state, permissions, recording lifecycle |
+| `DictationHUD.swift` + `InteractionMetrics.swift` | Nonactivating status panel and content-free local timing export |
 | `FnHotkey.swift` | Global event tap and hardware Fn/Globe events |
 | `AudioRecorder.swift` | Capture, resampling, bounded memory, interruption recovery |
 | `WhisperTranscriber.swift` + `Native/whisper-worker.cpp` | Persistent local speech worker, framed audio IPC, cancellation |
@@ -102,7 +125,7 @@ Build and validate a complete app first. Set its version in `Resources/Info.plis
 ```bash
 python3 Scripts/make-release.py \
   "$PWD/.build-native/Local Dictation.app" \
-  "$PWD/release-assets" --tag v1.1.0
+  "$PWD/release-assets" --tag v1.2.0
 ```
 
 The release builder copies the app, includes first- and third-party notices, signs that copy ad-hoc, verifies it, and creates two archive parts below GitHub's 2 GiB asset limit. The original app is not modified. It also creates:

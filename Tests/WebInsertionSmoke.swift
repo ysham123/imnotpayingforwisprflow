@@ -13,7 +13,7 @@ import ApplicationServices
         setbuf(stdout, nil)
         app.setActivationPolicy(.prohibited)
         Task { @MainActor in
-            do { try await run(); print("Passed 14 synthetic \(engine) insertion regressions"); exit(0) }
+            do { try await run(); print("Passed 16 synthetic \(engine) insertion regressions"); exit(0) }
             catch { fputs("WEB INSERTION TEST FAILED: \(error)\n", stderr); exit(1) }
         }
         app.run()
@@ -254,6 +254,24 @@ import ApplicationServices
         catch TextInserter.InsertionError.targetChanged { }
         try await expectValue("plain", "same", pasteCount: 0)
         print("PASS identical different web field rejection")
+        for field in ["input", "rich"] {
+            try await seed(field, "anchor ", location: 7)
+            inserter.primeFrontmostAccessibility()
+            try await Task.sleep(nanoseconds: 100_000_000)
+            guard let anchor = inserter.beginCapture(expectedProcessIdentifier: fixturePID) else {
+                throw NSError(domain: "Warm synthetic \(engine) \(field) identity anchor unavailable", code: 1)
+            }
+            let pinned = try await inserter.inspect(anchor)
+            var dispatched = 0, verified = 0
+            _ = try await inserter.insert(text: "placed", into: pinned,
+                onDispatched: { dispatched += 1 }, onVerified: { verified += 1 })
+            try await expectValue(field, "anchor placed", pasteCount: 1)
+            try check(dispatched == 1, "Anchored web placement dispatched repeatedly")
+            // Marker-only editors may lack a value/range API for verification;
+            // DOM acceptance above still proves one owned-fixture insertion.
+            try check(verified <= 1, "Anchored web verification callback repeated")
+            print("PASS \(engine) asynchronous pinned \(field) capture and explicit placement")
+        }
         print(remoteElementObserved ? "Observed and validated remote \(engine) editor process" : "\(engine) editor was presented under fixture application PID on this macOS version")
     }
 }

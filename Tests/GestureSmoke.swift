@@ -39,7 +39,18 @@ enum GestureSmoke {
             ("unpaired or late Globe events still cancel", unpairedGlobe),
             ("Globe with modifiers remains a chord", modifiedGlobe),
             ("duplicate Globe events cannot hide a chord", duplicateGlobe),
-            ("ordinary tap duration works but a hold does not", mappedTapDuration)
+            ("ordinary tap duration works but a hold does not", mappedTapDuration),
+            ("pending single waits then places exactly once", pendingSingle),
+            ("pending double resolves without pasting", pendingDouble),
+            ("pending second press suspends the placement deadline", pendingSecondPress),
+            ("pending hold does not place text", pendingHold),
+            ("pending input and focus invalidate placement", pendingInvalidation),
+            ("pending state change invalidates timer", pendingPhaseChange),
+            ("late pending timer cannot paste during a fresh tap", pendingLateTimer),
+            ("pending Fn Globe companion preserves placement", pendingCompanion),
+            ("pending double suppresses trailing triple tap", pendingTrailingTap),
+            ("paired Globe is not reported as physical input", mapperInputEpoch),
+            ("synthetic paste cannot cancel a new Fn gesture", syntheticPaste)
         ]
         do {
             for (name, body) in cases {
@@ -239,4 +250,119 @@ enum GestureSmoke {
         try expect(mappedTap(&mapper, at: 2, duration: 0.6) == nil, "Long hold stopped recording")
         try expect(mappedTap(&mapper, at: 3, duration: 0.2) == .stop, "Tap did not stop after hold")
     }
+    private static func pendingSingle() throws {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        try expect(try tap(&gesture, at: 1) == nil, "Pending tap placed before double-tap interval")
+        try expect(gesture.advance(at: 1.399) == nil, "Early timer placed text")
+        try expect(gesture.advance(at: 1.401) == .placePending, "Single tap did not place text")
+        try expect(gesture.phase == .processing, "Placement did not lock gestures")
+        try expect(gesture.advance(at: 2) == nil, "Timer placed twice")
+        try expect(try tap(&gesture, at: 3) == nil, "Repeated tap escaped placement lock")
+    }
+
+    private static func pendingDouble() throws {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        try expect(try tap(&gesture, at: 1) == nil, "First tap placed text")
+        try expect(try tap(&gesture, at: 1.2) == .resolvePending, "Double tap did not protect pending text")
+        try expect(gesture.phase == .pending && gesture.pendingActionDeadline == nil, "Double tap armed placement")
+        try expect(gesture.advance(at: 3) == nil, "Double-tap timer pasted")
+    }
+
+    private static func pendingSecondPress() throws {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        _ = try tap(&gesture, at: 1)
+        gesture.handleFnDown(at: 1.39)
+        try expect(gesture.pendingActionDeadline == nil && gesture.advance(at: 1.41) == nil,
+                   "Single fired while second press was held")
+        try expect(gesture.handleFnUp(at: 1.55) == .resolvePending,
+                   "Second press begun inside interval must not become placement")
+    }
+
+    private static func pendingHold() throws {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        _ = try tap(&gesture, at: 1)
+        gesture.handleFnDown(at: 1.2)
+        try expect(gesture.advance(at: 2) == nil, "Hold triggered placement")
+        try expect(gesture.handleFnUp(at: 2.1) == nil && gesture.advance(at: 3) == nil,
+                   "Hold left pending single tap")
+    }
+
+    private static func pendingInvalidation() throws {
+        for focusChange in [false, true] {
+            var gesture = HotkeyGesture()
+            gesture.setPhase(.pending, at: 0)
+            _ = try tap(&gesture, at: 1)
+            if focusChange { gesture.invalidate() } else { gesture.handleOtherKey() }
+            try expect(gesture.advance(at: 2) == nil, "Intervening input/focus did not cancel placement")
+        }
+    }
+
+    private static func pendingPhaseChange() throws {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        _ = try tap(&gesture, at: 1)
+        gesture.setPhase(.idle, at: 1.1)
+        try expect(gesture.advance(at: 2) == nil, "Copy/discard left an armed timer")
+        gesture.setPhase(.pending, at: 3)
+        _ = try tap(&gesture, at: 4)
+        gesture.setPhase(.pending, at: 4.1)
+        try expect(gesture.advance(at: 4.5) == .placePending, "Same-phase refresh canceled valid placement")
+    }
+
+    private static func pendingLateTimer() throws {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        _ = try tap(&gesture, at: 1)
+        gesture.handleFnDown(at: 2)
+        try expect(gesture.advance(at: 2.01) == nil, "Late timer pasted during another press")
+        try expect(gesture.handleFnUp(at: 2.05) == nil, "Expired first tap became a double tap")
+        try expect(gesture.advance(at: 2.41) == .placePending, "Fresh single was not recognized")
+    }
+
+    private static func pendingCompanion() throws {
+        var mapper = FnKeyEventMapper()
+        mapper.setPhase(.pending, at: 0)
+        _ = mappedTap(&mapper, at: 1)
+        globe(&mapper, at: 1.101)
+        try expect(mapper.advance(at: 1.61) == .placePending, "Globe companion canceled pending placement")
+    }
+
+    private static func pendingTrailingTap() throws {
+        var gesture = HotkeyGesture()
+        gesture.setPhase(.pending, at: 0)
+        _ = try tap(&gesture, at: 1)
+        try expect(try tap(&gesture, at: 1.2) == .resolvePending, "Double tap did not resolve")
+        try expect(try tap(&gesture, at: 1.4) == nil && gesture.advance(at: 2) == nil,
+                   "Third tap after double caused unwanted placement")
+    }
+
+    private static func mapperInputEpoch() throws {
+        var mapper = FnKeyEventMapper()
+        _ = mappedTap(&mapper, at: 1)
+        globe(&mapper, at: 1.101)
+        try expect(mapper.interruptionCount == 0, "Fn/Globe invalidated the original target")
+        _ = mapper.handle(.keyDown, keyCode: 0, functionDown: false, otherModifiersHeld: false, at: 1.2)
+        try expect(mapper.interruptionCount == 1, "An ordinary keystroke was not reported")
+    }
+
+    private static func syntheticPaste() throws {
+        var mapper = FnKeyEventMapper()
+        _ = mappedTap(&mapper, at: 1)
+        _ = mapper.handle(.flagsChanged, keyCode: 55, functionDown: false,
+                          otherModifiersHeld: true, at: 1.11, isPhysical: false)
+        _ = mapper.handle(.keyDown, keyCode: 9, functionDown: false,
+                          otherModifiersHeld: true, at: 1.12, isPhysical: false)
+        try expect(mappedTap(&mapper, at: 1.2) == .start, "Synthetic paste canceled next double tap")
+        try expect(mapper.interruptionCount == 0, "Synthetic paste invalidated target epoch")
+        mapper.setPhase(.pending, at: 3)
+        _ = mappedTap(&mapper, at: 4)
+        _ = mapper.handle(.keyDown, keyCode: 9, functionDown: false,
+                          otherModifiersHeld: true, at: 4.2, isPhysical: false)
+        try expect(mapper.advance(at: 4.61) == .placePending, "Synthetic paste canceled explicit placement")
+    }
+
 }
