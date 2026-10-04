@@ -33,6 +33,18 @@
     const range = document.createRange(); range.setStart(...start); range.setEnd(...end);
     const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
   }
+  function selectedRange(el) {
+    if (el.matches('input,textarea')) {
+      return {location:el.selectionStart,length:el.selectionEnd - el.selectionStart};
+    }
+    const selection = getSelection();
+    if (!selection.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+    const before = range.cloneRange(); before.selectNodeContents(el);
+    before.setEnd(range.startContainer,range.startOffset);
+    return {location:before.toString().length,length:range.toString().length};
+  }
   function insertText(el, text) {
     if (el.matches('input,textarea')) {
       const start = el.selectionStart, end = el.selectionEnd;
@@ -77,7 +89,8 @@
         if ('location' in command && command.field !== 'password') select(el, command.location, command.length || 0);
       }
       return {values:Object.fromEntries(ids.map(id => [id,value(document.getElementById(id))])),
-              pasteCounts:{...counts},active:document.activeElement.id};
+              pasteCounts:{...counts},active:document.activeElement.id,
+              selection:selectedRange(document.activeElement)};
     },
     deferredInsert({text}) {
       const el = document.getElementById('delayedRead'); counts.delayedRead++;

@@ -16,7 +16,8 @@ The release executable compiles with Swift 5.10. A complete candidate bundle has
 | Area | Result |
 |---|---|
 | Fn gestures | 30 regressions, including delayed pending placement, double-tap refusal, interruption, and synthetic paste events |
-| Session state and timing export | Protected pending results, new capture before prior delivery completes, stale receipts, cancellation, discard, and content-free JSON passed |
+| Session state and timing export | 22 assertions covering protected pending results, new capture before prior delivery completes, stale receipts, cancellation, discard, and content-free JSON passed |
+| Target-inspection cancellation | 2 groups passed: canceled queued and already-canceled requests skip Accessibility work without poisoning the next request |
 | Correction validation | 32 existing conservative-cleanup cases passed |
 | Owned-service caching | 9 metadata, ownership, invalidation, retention, and unload checks passed |
 | Correction lifecycle | 4 shared-start, bounded-shutdown, immediate-rewarm, and canceled-start recovery checks passed |
@@ -24,9 +25,11 @@ The release executable compiles with Swift 5.10. A complete candidate bundle has
 | Transcriber | 6 cancellation/recovery and 5 worker-fault cases passed |
 | Native insertion | 15 groups passed, including pinned identity capture, off-main inspection, away-and-return invalidation, queued delivery and cancellation |
 | WebKit insertion | 16 cases passed, including async pinned input/rich-editor capture and explicit placement |
-| Electron insertion | Final run pending |
-| Floating indicator | 5 focus/control checks passed with the final button appearance |
+| Electron insertion | 16 cases passed in the final isolated run |
+| Floating indicator | 6 checks passed: all states and real action clicks preserve editor focus; changed guidance is announced and level updates stay silent |
 | Packaging/installer | 4 package rollback and 8 installer failure/replacement checks passed; these fault tests mock signing |
+
+One earlier Electron run, overlapping other test/model activity, produced an unexplained textarea selection mismatch. The complete isolated repeat passed without a product-code change. A further 12 focused selection replacements (six asynchronous anchors and six legacy captures, including Unicode/emoji and multiline text) also matched DOM/Accessibility ranges, delivered one paste each, and restored the clipboard. This remains a validation limitation; the repeat does not establish a root cause or a fix for that initial result.
 
 The identity anchor reads no field text. Full target inspection runs on a serial worker with request-local deadlines. A paste dispatch releases recording readiness, while the clipboard lease and insertion observation continue separately. The delivery fixture waits for the first insertion to be observed before moving its field, still within the clipboard read window; it does not claim that a posted global keyboard event is synchronously consumed.
 
@@ -36,11 +39,31 @@ UI fixtures verify nonactivation across all nine HUD states and actual action-bu
 
 Content-free interaction measurements are kept only in memory and exported explicitly. `indicatorRequested` measures when AppKit was asked to show the panel, not when the display physically presented it. `verifiedVisible` is the first observed Accessibility insertion; an editor may visibly update earlier. Stop-to-dispatch, observed insertion, and next-capture readiness are reported separately.
 
-A preliminary ten-round read-only check of the existing correction service measured `/api/tags` at a 0.68 ms median and `/api/show` at 35.28 ms. This establishes a modest metadata overhead, not a full dictation speedup. Complete baseline/candidate model measurements are pending an exclusive model window. The 100 ms visible-feedback goal is not yet verified.
+The M2 Pro comparison used the same bundled models and synthetic audio, with 20 warm runs and 5 runs in each other condition per length: 70 runs per version. Short audio is about 9.8 seconds; the long sample repeats it three times. All 140 runs produced nonempty recognition and accepted cleanup. These repeated fixtures measure timing, not general recognition accuracy. Baseline ran first, then the candidate, without other dictation/model or GUI tests running. This is a single-machine sequential comparison, not a randomized performance study.
+
+| Condition | Audio | Runs per version | v1.1.1 median / p95 | v1.2 median / p95 |
+|---|---|---:|---:|---:|
+| Warm | Short | 20 | 1.85 / 2.00 s | 1.77 / 1.95 s |
+| Cold | Short | 5 | 6.45 / 7.36 s | 6.12 / 6.52 s |
+| After 2 s idle | Short | 5 | 2.02 / 2.26 s | 2.07 / 3.65 s |
+| Immediately after cancel | Short | 5 | 2.57 / 16.98 s | 2.47 / 2.56 s |
+| Warm | Long | 20 | 2.18 / 2.38 s | 2.15 / 2.22 s |
+| Cold | Long | 5 | 6.74 / 6.86 s | 5.99 / 7.06 s |
+| After 2 s idle | Long | 5 | 2.50 / 2.76 s | 3.64 / 6.47 s |
+| Immediately after cancel | Long | 5 | 3.00 / 3.28 s | 2.89 / 3.34 s |
+
+Times include recognition and correction, excluding microphone startup and editor delivery. p95 uses nearest rank; with only five runs it is the maximum, so tail estimates outside the warm condition are especially uncertain. All outliers are retained. The baseline short post-cancellation outlier included 13.30 seconds of recognition. The candidate's slower long idle runs spent up to 3.70 seconds evaluating the correction prompt while reported model-load time stayed below 0.08 seconds. This does not establish a cause or a fix, and v1.2 is not faster in every condition.
+
+The two-second idle condition does not exercise the previous ten-minute retention timeout. The immediate post-cancellation condition measures the first request after cancellation without scheduling the app controller's background rewarming. Cold runs unload correction and terminate speech first, then include both model reloads in the timed request; they do not include application launch. Warm median and p95 did not regress in this sample.
+
+Raw numeric data: [v1.1.1 baseline](benchmarks/backend-baseline-v1.1.1.json), [v1.2 candidate](benchmarks/backend-candidate-v1.2.0.json). No audio or transcript contents are included. Actual microphone readiness, stop-to-visible insertion, and the 100 ms physical-display feedback goal still need installed-app measurements; fixture timing and backend timing do not establish those results.
+
+### Correction quality
+
+The unchanged real models and cleanup rules passed the same 11 exact text-correction cases in both v1.1.1 and v1.2. Coverage includes “Add 3, I mean 2 items,” explicit weekday/time revisions across a sentence boundary, names with accents, identifiers, negation, repeated words, and prompt-like dictated content. These are direct cleanup tests, not a broad speech-recognition accuracy benchmark or proof of accented-name recognition. The [baseline](benchmarks/real-cleanup-baseline-v1.1.1.json) and [candidate](benchmarks/real-cleanup-candidate-v1.2.0.json) reports contain only pass flags and timings. The synthetic case definitions are in `Tests/CleanupModelSmoke.swift`.
 
 ### Remaining release gates
 
-- Complete final Electron/HUD runs and full model comparison.
 - Install and test the candidate's physical Fn and explicit placement flow in real applications.
 - Verify the generated split release through the real offline installer before publishing stable v1.2.
 

@@ -50,6 +50,7 @@ These checks need macOS developer tools, but do not need model downloads, microp
 ```bash
 bash Scripts/test-core.sh
 bash Scripts/test-session.sh
+bash Scripts/test-target-inspector.sh
 bash Scripts/test-cleanup.sh
 bash Scripts/test-cleanup-service.sh
 bash Scripts/test-correction-lifecycle.sh
@@ -94,14 +95,14 @@ Run backend benchmarks with a synthetic audio fixture after quitting the normal 
 ```bash
 bash Scripts/benchmark-backend.sh \
   "/Applications/Local Dictation.app/Contents/Resources" \
-  /path/to/synthetic-speech.wav /tmp/v1.2-benchmark.json 20 2
+  /path/to/synthetic-speech.wav /tmp/v1.2-benchmark.json 5 2 - 20
 # Repeat against the preceding release's source for comparison:
 bash Scripts/benchmark-backend.sh \
   "/Applications/Local Dictation.app/Contents/Resources" \
-  /path/to/synthetic-speech.wav /tmp/v1.1-benchmark.json 20 2 v1.1.1
+  /path/to/synthetic-speech.wav /tmp/v1.1-benchmark.json 5 2 v1.1.1 20
 ```
 
-The harness uses an isolated loopback service and reports numeric results without transcripts. The fourth argument is repetitions; the fifth is idle seconds. Use more than 600 seconds to exercise the older model-retention timeout. Short idle measurements do not establish performance after that timeout. Backend benchmarks exclude microphone capture and editor delivery; use the interactive exporter for those stages.
+The harness uses an isolated loopback service and reports numeric results without transcripts. The fourth argument is repetitions per condition; the fifth is idle seconds. The sixth selects a baseline Git ref (`-` uses the current source), and the seventh optionally overrides warm repetitions. These commands reproduce the published 20 warm / 5 other runs per length. Use more than 600 seconds to exercise the older model-retention timeout. Short idle measurements do not establish performance after that timeout. Backend benchmarks exclude microphone capture and editor delivery; use the interactive exporter for those stages.
 
 ## Source map
 
@@ -114,7 +115,8 @@ The harness uses an isolated loopback service and reports numeric results withou
 | `AudioRecorder.swift` | Capture, resampling, bounded memory, interruption recovery |
 | `WhisperTranscriber.swift` + `Native/whisper-worker.cpp` | Persistent local speech worker, framed audio IPC, cancellation |
 | `LocalCorrectionService.swift` + `CleanupClient.swift` | Bundled Ollama lifecycle, cleanup request, conservative validation |
-| `TextInserter.swift` | Target validation, editable ancestors, clipboard transaction, paste verification |
+| `TargetInspector.swift` | Pinned field identity, serialized Accessibility inspection, focus and caret validation |
+| `TextInserter.swift` + `DeliveryCoordinator.swift` | Validated paste delivery, serialized clipboard leases, insertion observation, and restoration |
 | `Tests/` | Gesture, cleanup, audio, worker, insertion, and packaging regressions |
 | `Distribution/` | Installer template and pinned current-release metadata |
 

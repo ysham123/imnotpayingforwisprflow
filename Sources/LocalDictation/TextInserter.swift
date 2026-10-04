@@ -230,10 +230,11 @@ final class TextInserter {
         return result
     }
 
-    func copyForRecovery(text: String) {
+    @discardableResult
+    func copyForRecovery(text: String) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.prepareForNewContents(with: [.currentHostOnly])
-        pasteboard.setString(text, forType: .string)
+        return pasteboard.setString(text, forType: .string)
     }
 
     private static func wait(milliseconds: Int) async {

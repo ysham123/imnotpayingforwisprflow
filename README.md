@@ -109,7 +109,11 @@ Local Dictation does not change these settings automatically.
 3. Speak naturally, including corrections such as “Thursday, sorry, Friday.”
 4. **Tap Fn once** to finish. Wait for transcription and cleanup, then check the text.
 
-If you click away or move the cursor, the indicator shows **Text ready**. Click the intended text box and **tap Fn once** to place your words. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; a double-tap will remind you instead of overwriting it.
+If you click away or move the cursor, the indicator shows **Text ready**. Click the intended text box and **tap Fn once** to place your words. A short pause distinguishes this single tap from a double-tap. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; a double-tap will remind you instead of overwriting it.
+
+<p align="center">
+  <img src=".github/assets/status-ready.png" alt="Text ready. Click a text box, then tap Fn once. Copy and Discard buttons." width="520" />
+</p>
 
 **Paste sent** means the app sent one paste but could not confirm the editor's update. Check the field before using **Copy last result**. It never automatically pastes the same result twice.
 
@@ -168,7 +172,7 @@ The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting 
 | Installation is interrupted | Rerun the installer. Partial downloads in its versioned cache can resume. |
 | Signature verification reports “resource fork” or Finder metadata | Install into the default local Applications folder. iCloud or other synced destinations can add metadata that invalidates the bundle. |
 
-The creator has confirmed the Fn workflow in Google search and, with version 1.1.1, in both Claude and ChatGPT desktop text boxes. The patch passes 41 insertion checks across native AppKit, WKWebView, and Electron fixtures, including rich editors, delayed clipboard reads, and protected controls. Compatibility varies by app and editor; see the [validation record](docs/VALIDATION.md) for tested versions and limits. Opaque fields keep text waiting; Copy remains available when explicit placement cannot verify them. Terminal panes are not validated, and multiline terminal paste can execute commands depending on terminal settings.
+The creator has confirmed the Fn workflow in Google search and, with version 1.1.1, in both Claude and ChatGPT desktop text boxes. The v1.2 candidate passes insertion checks across native AppKit, WKWebView, and Electron fixtures, including rich editors, delayed clipboard reads, and protected controls. Compatibility varies by app and editor; see the [validation record](docs/VALIDATION.md) for tested versions and limits. Opaque fields keep text waiting; Copy remains available when explicit placement cannot verify them. Terminal panes are not validated, and multiline terminal paste can execute commands depending on terminal settings.
 
 Rich editors can update their accessibility text after the paste has already appeared. The app observes the original editor for up to 2.5 seconds and keeps the staged clipboard available during that window. If it still cannot confirm insertion, it reports **Paste sent** and keeps **Copy last result** available. An unchanged accessibility value does not prove that paste failed; check the visible field before inserting the result again. A new recording can begin after paste dispatch while this clipboard cleanup finishes; any subsequent paste waits for the previous transaction.
 
@@ -181,7 +185,7 @@ Current limits:
 - Ad-hoc app updates may require permission approval again.
 - No Intel Mac, Windows, or Linux binary.
 
-The historical v1.1 sample took about **1.0 second for recognition** and **2.1 seconds through cleanup** on an M2 Pro with 16 GB RAM. That timing excluded microphone startup and text delivery. See [validation details](docs/VALIDATION.md) for v1.2 measurements and their limits. Models stay warm during ordinary use and are released when idle under memory pressure or on sleep; loading them again takes longer.
+On an M2 Pro with 16 GB RAM, v1.2 processed the 9.8-second synthetic sample in a **1.77-second warm median** (1.95-second p95 across 20 runs). This includes speech recognition and cleanup, excluding microphone startup and text delivery. Cold starts and some idle runs take longer. See the full [baseline comparison and limits](docs/VALIDATION.md#performance-evidence). Models stay warm during ordinary use and are released when idle under memory pressure or on sleep; loading them again takes longer.
 
 ## Build, test, contribute
 

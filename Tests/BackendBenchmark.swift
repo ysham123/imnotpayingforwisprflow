@@ -123,6 +123,7 @@ import Darwin
                     rows.append(row)
                     try await Task.sleep(nanoseconds: 100_000_000)
                     print("\(length) \(condition) \(run + 1)/\(conditionRuns): \(String(format: "%.3f", finished - started))s success=\(cleanupSucceeded)")
+                    fflush(stdout)
                 }
                 engine.shutdown()
                 try await Task.sleep(nanoseconds: 600_000_000)

@@ -84,7 +84,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         RunLoop.main.add(timer!, forMode: .common)
         refreshPermissions()
-        if !allPermissions { showSetup() }
+        if !allPermissions || CommandLine.arguments.contains("--setup") { showSetup() }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showSetup() }
+        return true
     }
 
     private var missingPermissions: [String] {
@@ -229,6 +234,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func syncHotkey() {
+        guard !isTerminating else { hotkey.setPhase(.processing); return }
         switch phase {
         case .idle: hotkey.setPhase(.idle)
         case .listening: hotkey.setPhase(.listening)
@@ -247,6 +253,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func startDictation() {
+        guard !isTerminating else { return }
         if state.pendingText != nil { showPending(); return }
         guard phase == .idle, allPermissions, monitoring, !suspending, !copyInProgress else {
             syncHotkey()
@@ -354,6 +361,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func placePending() {
+        guard !isTerminating else { return }
         guard phase == .pending, let text = state.pendingText else { syncHotkey(); return }
         guard !copyInProgress else { showPending("Finishing clipboard copy…"); return }
         guard allPermissions, monitoring else { showPending("Text saved · finish permission setup to place it"); return }
@@ -426,7 +434,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func cancelDictation() {
-        guard phase == .listening || phase == .processing else { return }
+        guard !isTerminating, phase == .listening || phase == .processing else { return }
         let canceled = session
         processingTask?.cancel(); processingTask = nil; targetTask?.cancel(); targetTask = nil
         state.cancel(); engineGeneration &+= 1; engineReady = false; transcriber.cancel()
@@ -450,17 +458,27 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func copyLast() {
-        guard !copyInProgress, phase == .idle || phase == .pending,
+        guard !isTerminating, !copyInProgress, phase == .idle || phase == .pending,
               let text = state.pendingText ?? lastText else { return }
         let token = session
         copyInProgress = true; updateStatus("Finishing clipboard copy…")
+        if phase == .pending { hud.show(.ready, message: "Finishing clipboard copy…") }
         Task { [weak self] in
             guard let self else { return }
             // A previous editor may not have consumed its dispatched paste yet.
             await inserter.waitForPendingPaste()
             copyInProgress = false
-            guard token == session, !isTerminating else { return }
-            inserter.copyForRecovery(text: text)
+            guard !isTerminating else { return }
+            guard token == session else { updateStatus(status); return }
+            guard inserter.copyForRecovery(text: text) else {
+                if state.pendingText != nil { showPending("Copy failed · your text is still waiting") }
+                else {
+                    updateStatus("Copy failed · Copy last result is still available")
+                    hud.show(.pasteSent, message: "Copy failed · check the text box or try Copy again")
+                    dismissHUD(after: 5, for: token)
+                }
+                return
+            }
             if state.pendingText != nil { state.resolvePending(copied: true) }
             recoveryNeeded = false; syncHotkey(); updateStatus("Copied · paste wherever you need it")
             hud.hide(); suspendEnginesIfIdle()
@@ -468,7 +486,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func discardPending() {
-        guard phase == .pending else { return }
+        guard !isTerminating, phase == .pending else { return }
         state.resolvePending(copied: false); recoveryNeeded = false
         syncHotkey(); hud.hide(); updateStatus(permissionStatus); suspendEnginesIfIdle()
     }
@@ -505,7 +523,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         source.setEventHandler { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, let events = self.pressureSource?.data else { return }
-                self.memoryPressure = !events.contains(.normal)
+                self.memoryPressure = events.contains(.warning) || events.contains(.critical)
                 self.suspendEnginesIfIdle()
             }
         }
@@ -547,15 +565,26 @@ final class AppController: NSObject, NSApplicationDelegate {
             if answer == .alertFirstButtonReturn { copyOnQuit = state.pendingText }
         }
         guard inserter.hasPendingPaste else {
-            if let copyOnQuit { inserter.copyForRecovery(text: copyOnQuit) }
+            if let copyOnQuit, !inserter.copyForRecovery(text: copyOnQuit) {
+                showPending("Copy failed · your text is still waiting")
+                return .terminateCancel
+            }
             return .terminateNow
         }
         isTerminating = true
-        processingTask?.cancel(); hotkey.stop(); timer?.invalidate()
+        processingTask?.cancel(); targetTask?.cancel(); state.cancel(); recorder.cancel()
+        // Keep the timer/listener alive until termination is confirmed, so a
+        // failed Copy and Quit can return to a fully usable pending session.
+        hotkey.setPhase(.processing)
         updateStatus("Restoring clipboard before quitting…")
         Task { @MainActor in
             await inserter.waitForPendingPaste()
-            if let copyOnQuit { inserter.copyForRecovery(text: copyOnQuit) }
+            if let copyOnQuit, !inserter.copyForRecovery(text: copyOnQuit) {
+                isTerminating = false; syncHotkey()
+                showPending("Copy failed · your text is still waiting")
+                sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -689,7 +718,10 @@ final class AppController: NSObject, NSApplicationDelegate {
                 }
                 inserter.primeFrontmostAccessibility()
                 try await Task.sleep(nanoseconds: 2_500_000_000)
-                let destination = try inserter.captureTarget()
+                guard let anchor = inserter.beginCapture() else {
+                    throw DictationError.message("The test field has no stable identity or selection")
+                }
+                let destination = try await inserter.inspect(anchor)
                 let original = NSPasteboard.general.string(forType: .string)
                 let result = try await inserter.insert(text: args[index + 1], into: destination)
                 let restored = NSPasteboard.general.string(forType: .string) == original

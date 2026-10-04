@@ -12,7 +12,7 @@ import AppKit
         NSApplication.shared.setActivationPolicy(.accessory)
         setbuf(stdout, nil)
         Task { @MainActor in
-            do { try await run(); print("Passed 5 external-editor HUD regressions"); exit(0) }
+            do { try await run(); print("Passed 6 external-editor HUD and announcement regressions"); exit(0) }
             catch { fputs("HUD TEST FAILED: \(error)\n", stderr); exit(1) }
         }
         NSApplication.shared.run()
@@ -66,10 +66,22 @@ import AppKit
     }
 
     @MainActor static func click(_ id: String, hud: DictationHUD, didReceive: () -> Bool) async throws {
-        // Let WindowServer commit a state-driven resize before deriving the
-        // global click point; an immediate posted event uses the old origin.
-        try await Task.sleep(nanoseconds: 120_000_000)
         hud.panel.contentView?.layoutSubtreeIfNeeded()
+        hud.panel.displayIfNeeded()
+        // Match this panel's committed WindowServer bounds, not a guessed
+        // delay. Layout can resize it after the prior state was displayed.
+        let geometryDeadline = ProcessInfo.processInfo.systemUptime + 3
+        var stableSamples = 0
+        while stableSamples < 3, ProcessInfo.processInfo.systemUptime < geometryDeadline {
+            hud.panel.contentView?.layoutSubtreeIfNeeded()
+            hud.panel.displayIfNeeded()
+            let frame = hud.panel.frame
+            let expected = CGRect(x: frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - frame.maxY,
+                                  width: frame.width, height: frame.height)
+            stableSamples = committedBounds(of: hud.panel) == expected ? stableSamples + 1 : 0
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        try check(stableSamples == 3, "HUD WindowServer geometry did not settle: \(String(describing: committedBounds(of: hud.panel)))")
         guard let content = hud.panel.contentView, let button = findButton(id, in: content),
               !button.isHidden else { throw NSError(domain: "HUD button unavailable: \(id)", code: 1) }
         try check(!button.acceptsFirstResponder && !button.needsPanelToBecomeKey,
@@ -77,6 +89,12 @@ import AppKit
         let center = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
         let global = hud.panel.convertPoint(toScreen: center)
         let point = CGPoint(x: global.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - global.y)
+        var receivedEvents: [String] = []
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
+            if event.window === hud.panel { receivedEvents.append("\(event.type.rawValue):\(event.locationInWindow)") }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
         let source = CGEventSource(stateID: .combinedSessionState)
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
@@ -89,8 +107,16 @@ import AppKit
         while !didReceive(), ProcessInfo.processInfo.systemUptime < deadline {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        try check(didReceive(), "Actual mouse click did not invoke \(id)")
+        try check(didReceive(), "Actual mouse click did not invoke \(id); button=\(button.frame), expectedLocal=\(center), appFrame=\(hud.panel.frame), serverFrame=\(String(describing: committedBounds(of: hud.panel))), received=\(receivedEvents)")
         try await assertEditorRetainedFocus(hud)
+    }
+
+    @MainActor static func committedBounds(of panel: NSPanel) -> CGRect? {
+        guard let entries = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(panel.windowNumber)) as? [[String: Any]],
+              let bounds = entries.first?[kCGWindowBounds as String] as? [String: Any],
+              let x = bounds["X"] as? Double, let y = bounds["Y"] as? Double,
+              let width = bounds["Width"] as? Double, let height = bounds["Height"] as? Double else { return nil }
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 
     @MainActor static func savePreview(_ hud: DictationHUD, named name: String) throws {
@@ -111,7 +137,8 @@ import AppKit
             _ = try await command(["focus": true])
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        let hud = DictationHUD()
+        var announcements: [String] = []
+        let hud = DictationHUD(announce: { announcements.append($0) })
         defer { hud.hide() }
         let sourceScreen = DictationHUD.activeScreen
         for state in [DictationHUD.State.starting, .listening, .transcribing, .correcting,
@@ -143,5 +170,22 @@ import AppKit
         print("PASS real Copy click keeps the external editor focused")
         try await click("dictation-discard", hud: hud) { discarded == 1 }
         print("PASS real Discard click keeps the external editor focused")
+        let before = announcements.count
+        hud.show(.ready, message: "Insert, copy, or discard your previous text")
+        try check(announcements.count == before + 1 &&
+                  announcements.last?.contains("Insert, copy, or discard") == true,
+                  "Pending double-tap guidance was not announced")
+        hud.show(.ready, message: "Insert, copy, or discard your previous text")
+        try check(announcements.count == before + 1, "Repeated identical guidance was announced again")
+        hud.show(.ready, message: "Text saved · finish permission setup to place it")
+        try check(announcements.count == before + 2 &&
+                  announcements.last?.contains("permission setup") == true,
+                  "Changed permission guidance was not announced")
+        hud.show(.listening)
+        let beforeMeter = announcements.count
+        for value in [Float(0), 0.1, 0.7, 1, 0] { hud.updateLevel(value) }
+        try check(announcements.count == beforeMeter, "Audio level updates produced announcements")
+        try await assertEditorRetainedFocus(hud)
+        print("PASS changed pending guidance is announced; repeated guidance and meter updates remain silent")
     }
 }

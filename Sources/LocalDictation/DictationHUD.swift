@@ -65,8 +65,14 @@ final class DictationHUD {
     private let discardButton = PassiveButton(title: "Discard", target: nil, action: nil)
     private var displayID: NSNumber?
     private var screenObserver: NSObjectProtocol?
+    private let announce: (String) -> Void
 
-    init() {
+    init(announce: ((String) -> Void)? = nil) {
+        self.announce = announce ?? { message in
+            NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested,
+                                 userInfo: [.announcement: message,
+                                            .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        }
         panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 78),
                              styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
@@ -173,6 +179,7 @@ final class DictationHUD {
     /// preserve its display, even if the pointer moves to a different monitor.
     func show(_ state: State, message: String? = nil, on screen: NSScreen? = nil) {
         let previousState = self.state
+        let previousDetail = detail.stringValue
         self.state = state
         if let screen { displayID = Self.id(of: screen) }
         if displayID == nil { displayID = Self.id(of: Self.activeScreen) }
@@ -189,10 +196,8 @@ final class DictationHUD {
         panel.setContentSize(NSSize(width: width, height: 78))
         positionPanel()
         panel.orderFrontRegardless()
-        if previousState != state {
-            NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested,
-                                 userInfo: [.announcement: "\(state.title). \(detail.stringValue)",
-                                            .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        if previousState != state || previousDetail != detail.stringValue {
+            announce("\(state.title). \(detail.stringValue)")
         }
     }
 

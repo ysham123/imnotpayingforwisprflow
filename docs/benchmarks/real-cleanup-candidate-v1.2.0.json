@@ -1,0 +1,60 @@
+{
+  "cases" : [
+    {
+      "case" : 1,
+      "passed" : 1,
+      "seconds" : 0.55362470832187682
+    },
+    {
+      "case" : 2,
+      "passed" : 1,
+      "seconds" : 0.53220220835646614
+    },
+    {
+      "case" : 3,
+      "passed" : 1,
+      "seconds" : 0.48566849995404482
+    },
+    {
+      "case" : 4,
+      "passed" : 1,
+      "seconds" : 0.68446399999083951
+    },
+    {
+      "case" : 5,
+      "passed" : 1,
+      "seconds" : 0.54065625002840534
+    },
+    {
+      "case" : 6,
+      "passed" : 1,
+      "seconds" : 0.50183466670569032
+    },
+    {
+      "case" : 7,
+      "passed" : 1,
+      "seconds" : 0.58747629169374704
+    },
+    {
+      "case" : 8,
+      "passed" : 1,
+      "seconds" : 1.2418700000271201
+    },
+    {
+      "case" : 9,
+      "passed" : 1,
+      "seconds" : 0.74197608337271959
+    },
+    {
+      "case" : 10,
+      "passed" : 1,
+      "seconds" : 1.1968370416434482
+    },
+    {
+      "case" : 11,
+      "passed" : 1,
+      "seconds" : 0.90919775003567338
+    }
+  ],
+  "schema_version" : 1
+}

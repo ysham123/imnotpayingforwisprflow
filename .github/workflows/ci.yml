@@ -30,6 +30,8 @@ jobs:
         run: bash Scripts/test-core.sh
       - name: Session and diagnostics regressions
         run: bash Scripts/test-session.sh
+      - name: Target inspection cancellation regressions
+        run: bash Scripts/test-target-inspector.sh
       - name: Cleanup regressions
         run: bash Scripts/test-cleanup.sh
       - name: Owned correction cache regressions

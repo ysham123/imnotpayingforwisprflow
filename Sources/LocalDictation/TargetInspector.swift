@@ -5,10 +5,14 @@ import Foundation
 /// Full AX inspection has one owner and request-local timeouts. It never binds
 /// a newly focused control to a recording after that recording's anchor exists.
 final class TargetInspector: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "localdictation.target-inspector", qos: .userInitiated)
+    private let queue: DispatchQueue
     private var preparedApplications: [pid_t: NSRunningApplication] = [:]
     private var enhancedApplications: [pid_t: NSRunningApplication] = [:]
     private var retryAfter: [pid_t: TimeInterval] = [:]
+
+    init(queue: DispatchQueue = DispatchQueue(label: "localdictation.target-inspector", qos: .userInitiated)) {
+        self.queue = queue
+    }
 
     struct Observation: @unchecked Sendable {
         let value: String?
@@ -41,39 +45,53 @@ final class TargetInspector: @unchecked Sendable {
     }
 
     func inspect(_ anchor: TextInserter.Anchor) async throws -> TextInserter.Target {
-        try Task.checkCancellation()
-        let target: TextInserter.Target = try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                do {
-                    let context = AXInspection(budget: 1.2)
-                    try context.verifyAnchor(anchor)
-                    guard let editor = try context.focusedEditor(in: anchor.processIdentifier, pinnedLeaf: anchor.focusedLeaf),
-                          !context.inspectionFailed else { throw TextInserter.InsertionError.unverifiedTarget }
-                    let target = context.snapshot(editor, pid: anchor.processIdentifier)
-                    try context.verifyAnchor(anchor)
-                    guard !context.inspectionFailed, target.canInsertAutomatically else {
-                        throw TextInserter.InsertionError.unverifiedTarget
+        let cancellation = AXRequestCancellation()
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            let target: TextInserter.Target = try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    do {
+                        try cancellation.check()
+                        let context = AXInspection(budget: 1.2, cancellation: cancellation)
+                        try context.verifyAnchor(anchor)
+                        guard let editor = try context.focusedEditor(in: anchor.processIdentifier, pinnedLeaf: anchor.focusedLeaf),
+                              !context.inspectionFailed else { throw TextInserter.InsertionError.unverifiedTarget }
+                        let target = context.snapshot(editor, pid: anchor.processIdentifier)
+                        try context.verifyAnchor(anchor)
+                        try cancellation.check()
+                        guard !context.inspectionFailed, target.canInsertAutomatically else {
+                            throw TextInserter.InsertionError.unverifiedTarget
+                        }
+                        continuation.resume(returning: target)
+                    } catch {
+                        continuation.resume(throwing: cancellation.isCancelled ? CancellationError() : error)
                     }
-                    continuation.resume(returning: target)
-                } catch { continuation.resume(throwing: error) }
+                }
             }
-        }
-        try Task.checkCancellation()
-        return target
+            try Task.checkCancellation()
+            return target
+        }, onCancel: { cancellation.cancel() })
     }
 
     func validate(_ target: TextInserter.Target) async throws {
-        try Task.checkCancellation()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            queue.async {
-                do {
-                    let context = AXInspection(budget: 1.2)
-                    try context.validate(target)
-                    continuation.resume()
-                } catch { continuation.resume(throwing: error) }
+        let cancellation = AXRequestCancellation()
+        try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                queue.async {
+                    do {
+                        try cancellation.check()
+                        let context = AXInspection(budget: 1.2, cancellation: cancellation)
+                        try context.validate(target)
+                        try cancellation.check()
+                        continuation.resume()
+                    } catch {
+                        continuation.resume(throwing: cancellation.isCancelled ? CancellationError() : error)
+                    }
+                }
             }
-        }
-        try Task.checkCancellation()
+            try Task.checkCancellation()
+        }, onCancel: { cancellation.cancel() })
     }
 
     func observe(_ target: TextInserter.Target, until deadline: TimeInterval) async -> Observation {
@@ -140,6 +158,19 @@ final class TargetInspector: @unchecked Sendable {
     }
 }
 
+/// DispatchQueue work is outside the originating Swift task. This small flag
+/// lets canceled queued work exit without making AX requests for an old session.
+final class AXRequestCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var canceled = false
+    var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return canceled
+    }
+    func cancel() { lock.lock(); canceled = true; lock.unlock() }
+    func check() throws { if isCancelled { throw CancellationError() } }
+}
+
 /// Every inspection owns its deadline and failure flag. Quick identity anchors
 /// use a shorter per-message timeout and never read AXValue or selected text.
 final class AXInspection {
@@ -152,18 +183,21 @@ final class AXInspection {
 
     let inspectionDeadline: TimeInterval
     let timeout: Float
+    private let cancellation: AXRequestCancellation?
     var inspectionFailed = false
 
-    init(budget: TimeInterval, timeout: Float = 0.1) {
+    init(budget: TimeInterval, timeout: Float = 0.1, cancellation: AXRequestCancellation? = nil) {
         inspectionDeadline = ProcessInfo.processInfo.systemUptime + budget
         self.timeout = timeout
+        self.cancellation = cancellation
     }
     init(deadline: TimeInterval, timeout: Float = 0.1) {
         inspectionDeadline = deadline
         self.timeout = timeout
+        self.cancellation = nil
     }
     func hasTime(_ interval: TimeInterval = 0) -> Bool {
-        ProcessInfo.processInfo.systemUptime + interval < inspectionDeadline
+        cancellation?.isCancelled != true && ProcessInfo.processInfo.systemUptime + interval < inspectionDeadline
     }
 
     func unverifiedTarget(pid: pid_t) -> TextInserter.Target {
@@ -258,7 +292,7 @@ final class AXInspection {
               count.intValue >= 0, count.intValue <= 200_000 else { return nil }
         var range = CFRange(location: 0, length: count.intValue)
         guard let parameter = AXValueCreate(.cfRange, &range),
-              ProcessInfo.processInfo.systemUptime < inspectionDeadline else { return nil }
+              hasTime() else { return nil }
         var value: CFTypeRef?
         let result = AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString,
                                                                 parameter, &value)
@@ -391,8 +425,7 @@ final class AXInspection {
         }
         var pending: [(AXUIElement, Int)] = [(expected, 0)]
         var visited: [AXUIElement] = []
-        while !pending.isEmpty, visited.count < 64,
-              ProcessInfo.processInfo.systemUptime < inspectionDeadline {
+        while !pending.isEmpty, visited.count < 64, hasTime() {
             let (node, depth) = pending.removeFirst()
             if lineage.contains(where: { CFEqual($0, node) }) { return true }
             if visited.contains(where: { CFEqual($0, node) }) { continue }
@@ -416,9 +449,11 @@ final class AXInspection {
         else { return false }
 
         if boolAttribute("AXEditable", of: element) == true { return true }
+        guard hasTime() else { inspectionFailed = true; return false }
         AXUIElementSetMessagingTimeout(element, timeout)
         var valueIsSettable = DarwinBoolean(false)
         let settableStatus = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &valueIsSettable)
+        guard hasTime() else { inspectionFailed = true; return false }
         var rangeIsSettable = DarwinBoolean(false)
         let rangeStatus = AXUIElementIsAttributeSettable(element, kAXSelectedTextRangeAttribute as CFString, &rangeIsSettable)
         // Chromium's generic contenteditable groups can support ordinary
@@ -453,6 +488,7 @@ final class AXInspection {
     }
 
     func attribute(_ name: String, of element: AXUIElement, failureIsFatal: Bool = true) -> CFTypeRef? {
+        guard cancellation?.isCancelled != true else { inspectionFailed = true; return nil }
         guard ProcessInfo.processInfo.systemUptime < inspectionDeadline else {
             if failureIsFatal { inspectionFailed = true }; return nil
         }
