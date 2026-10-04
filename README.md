@@ -105,15 +105,17 @@ Local Dictation does not change these settings automatically.
 ### 4. Dictate
 
 1. Wait until the microphone menu says **Ready · double-tap Fn**, then click the text box where you want your words. Models can take a moment to load on first use.
-2. **Double-tap Fn / Globe** to start. A small floating indicator shows **Listening** and microphone activity.
+2. **Double-tap Fn / Globe** to start. A compact floating pill shows **Listening** and microphone activity. Setup gets out of the way when you begin.
 3. Speak naturally, including corrections such as “Thursday, sorry, Friday.”
 4. **Tap Fn once** to finish. Wait for transcription and cleanup, then check the text.
 
 If you click away or move the cursor, the indicator shows **Text ready**. Click the intended text box and **tap Fn once** to place your words. A short pause distinguishes this single tap from a double-tap. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; a double-tap will remind you instead of overwriting it.
 
 <p align="center">
-  <img src=".github/assets/status-ready.png" alt="Text ready. Click a text box, then tap Fn once. Copy and Discard buttons." width="520" />
+  <img src=".github/assets/status-ready.png" alt="Text ready. Click a text box, then tap Fn. Copy and Discard buttons." width="392" />
 </p>
+
+Completion feedback disappears quickly, or immediately when you click elsewhere. Clipboard cleanup continues in the background without reopening the pill. Only unsent text that still needs placement remains visible.
 
 **Paste sent** means the app sent one paste but could not confirm the editor's update. Check the field before using **Copy last result**. It never automatically pastes the same result twice.
 

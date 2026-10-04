@@ -12,7 +12,7 @@ import AppKit
         NSApplication.shared.setActivationPolicy(.accessory)
         setbuf(stdout, nil)
         Task { @MainActor in
-            do { try await run(); print("Passed 6 external-editor HUD and announcement regressions"); exit(0) }
+            do { try await run(); print("Passed 7 capsule HUD, external-editor, and announcement regressions"); exit(0) }
             catch { fputs("HUD TEST FAILED: \(error)\n", stderr); exit(1) }
         }
         NSApplication.shared.run()
@@ -147,11 +147,25 @@ import AppKit
             hud.updateLevel(0.2)
             try await Task.sleep(nanoseconds: 35_000_000)
             try await assertEditorRetainedFocus(hud)
-            if state == .listening || state == .ready {
-                try savePreview(hud, named: state == .ready ? "ready.png" : "listening.png")
+            let height = hud.panel.contentView!.bounds.height
+            try check(hud.panel.contentView!.layer?.cornerRadius == height / 2,
+                      "HUD is not a true capsule in state \(state)")
+            if [.starting, .listening, .transcribing, .correcting, .inserting].contains(state) {
+                try check(hud.panel.frame.width <= 292 && height <= 50, "Active dictation capsule is oversized")
+            }
+            if [.listening, .ready, .inserted, .pasteSent].contains(state) {
+                let filename: String
+                switch state {
+                case .ready: filename = "ready.png"
+                case .inserted: filename = "inserted.png"
+                case .pasteSent: filename = "paste-sent.png"
+                default: filename = "listening.png"
+                }
+                try savePreview(hud, named: filename)
             }
         }
         print("PASS all nine HUD states preserve external editor and caret")
+        print("PASS each state has capsule geometry and active dictation stays within its compact footprint")
         try check(hud.panel.collectionBehavior.contains(.canJoinAllSpaces) &&
                   hud.panel.collectionBehavior.contains(.fullScreenAuxiliary), "HUD lacks Spaces/full-screen support")
         if let sourceScreen {

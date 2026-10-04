@@ -10,7 +10,7 @@ final class DictationHUD {
 
         var title: String {
             switch self {
-            case .starting: return "Starting microphone"
+            case .starting: return "Starting"
             case .listening: return "Listening"
             case .transcribing: return "Transcribing"
             case .correcting: return "Correcting"
@@ -18,21 +18,20 @@ final class DictationHUD {
             case .ready: return "Text ready"
             case .inserted: return "Inserted"
             case .pasteSent: return "Paste sent"
-            case .error: return "Dictation needs attention"
+            case .error: return "Needs attention"
             }
         }
 
         var detail: String {
             switch self {
-            case .starting: return "Your microphone is starting."
-            case .listening: return "Tap Fn to finish."
-            case .transcribing: return "Turning your speech into text."
-            case .correcting: return "Cleaning up your words locally."
-            case .inserting: return "Checking the text box."
-            case .ready: return "Click a text box, then tap Fn once."
-            case .inserted: return "Ready for your next dictation."
-            case .pasteSent: return "Check the text box. A copy is available."
-            case .error: return "Open the microphone menu for details."
+            case .starting: return "Getting your microphone ready"
+            case .listening: return "Tap Fn to finish"
+            case .transcribing, .correcting: return "On your Mac"
+            case .inserting: return "Checking your text box"
+            case .ready: return "Click a text box · tap Fn"
+            case .inserted: return ""
+            case .pasteSent: return "Check your text box"
+            case .error: return "Open the microphone menu for details"
             }
         }
 
@@ -40,11 +39,11 @@ final class DictationHUD {
             switch self {
             case .starting, .listening: return "mic.fill"
             case .transcribing: return "text.bubble"
-            case .correcting: return "text.badge.checkmark"
+            case .correcting: return "sparkle"
             case .inserting: return "cursorarrow"
-            case .ready: return "text.cursor"
-            case .inserted: return "checkmark.circle.fill"
-            case .pasteSent: return "arrow.up.right.circle"
+            case .ready: return "text.alignleft"
+            case .inserted: return "checkmark"
+            case .pasteSent: return "arrow.up.right"
             case .error: return "exclamationmark.circle"
             }
         }
@@ -66,6 +65,7 @@ final class DictationHUD {
     private var displayID: NSNumber?
     private var screenObserver: NSObjectProtocol?
     private let announce: (String) -> Void
+    private var actionsWidth: NSLayoutConstraint!
 
     init(announce: ((String) -> Void)? = nil) {
         self.announce = announce ?? { message in
@@ -73,7 +73,7 @@ final class DictationHUD {
                                  userInfo: [.announcement: message,
                                             .priority: NSAccessibilityPriorityLevel.medium.rawValue])
         }
-        panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 78),
+        panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 268, height: 48),
                              styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
         panel.isFloatingPanel = true
@@ -89,19 +89,16 @@ final class DictationHUD {
         panel.title = "Local Dictation status"
         panel.animationBehavior = .none
 
-        let content = NSVisualEffectView()
-        content.material = .hudWindow
+        let content = CapsuleSurface()
+        content.material = .popover
         content.blendingMode = .behindWindow
         content.state = .active
-        content.wantsLayer = true
-        content.layer?.cornerRadius = 20
-        content.layer?.masksToBounds = true
         content.setAccessibilityRole(.group)
         content.setAccessibilityLabel("Local Dictation")
         panel.contentView = content
 
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
-        detail.font = .systemFont(ofSize: 12)
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
         detail.maximumNumberOfLines = 2
         detail.lineBreakMode = .byTruncatingTail
@@ -110,13 +107,15 @@ final class DictationHUD {
         let labels = NSStackView(views: [title, detail])
         labels.orientation = .vertical
         labels.alignment = .leading
-        labels.spacing = 3
+        labels.spacing = 2
+        labels.translatesAutoresizingMaskIntoConstraints = false
 
         let graphic = NSView()
         graphic.translatesAutoresizingMaskIntoConstraints = false
         symbol.translatesAutoresizingMaskIntoConstraints = false
         meter.translatesAutoresizingMaskIntoConstraints = false
-        symbol.contentTintColor = .controlAccentColor
+        symbol.contentTintColor = .labelColor
+        symbol.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
         symbol.imageScaling = .scaleProportionallyUpOrDown
         graphic.addSubview(symbol)
         graphic.addSubview(meter)
@@ -129,19 +128,24 @@ final class DictationHUD {
             ])
         }
         NSLayoutConstraint.activate([
-            graphic.widthAnchor.constraint(equalToConstant: 26),
-            graphic.heightAnchor.constraint(equalToConstant: 26)
+            graphic.widthAnchor.constraint(equalToConstant: 20),
+            graphic.heightAnchor.constraint(equalToConstant: 20)
         ])
 
         let buttons = NSStackView(views: [cancelButton, copyButton, discardButton])
-        buttons.spacing = 6
+        buttons.spacing = 8
+        buttons.alignment = .centerY
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.isCloseAction = true
+        discardButton.isQuietAction = true
         for button in [cancelButton, copyButton, discardButton] {
             button.target = self
             button.bezelStyle = .inline
-            button.font = .systemFont(ofSize: 12, weight: .medium)
+            button.font = .systemFont(ofSize: 11, weight: .semibold)
             button.refusesFirstResponder = true
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            button.toolTip = button.title
         }
         cancelButton.action = #selector(cancel)
         cancelButton.identifier = .init("dictation-cancel")
@@ -153,16 +157,20 @@ final class DictationHUD {
         discardButton.identifier = .init("dictation-discard")
         discardButton.setAccessibilityLabel("Discard waiting text")
 
-        let row = NSStackView(views: [graphic, labels, buttons])
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.spacing = 13
-        row.alignment = .centerY
-        content.addSubview(row)
+        content.addSubview(graphic)
+        content.addSubview(labels)
+        content.addSubview(buttons)
+        actionsWidth = buttons.widthAnchor.constraint(equalToConstant: 24)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
-            row.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
-            row.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
-            row.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12)
+            graphic.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            graphic.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            labels.leadingAnchor.constraint(equalTo: graphic.trailingAnchor, constant: 10),
+            labels.trailingAnchor.constraint(equalTo: buttons.leadingAnchor, constant: -12),
+            labels.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            labels.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: 6),
+            buttons.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            buttons.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            actionsWidth
         ])
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -184,20 +192,42 @@ final class DictationHUD {
         if let screen { displayID = Self.id(of: screen) }
         if displayID == nil { displayID = Self.id(of: Self.activeScreen) }
         title.stringValue = state.title
-        detail.stringValue = message ?? state.detail
+        var guidance = message ?? state.detail
+        // The menu includes its state in the same string; the capsule already
+        // has a dedicated title, so avoid repeating it in the smaller subtitle.
+        let prefix = state.title + " · "
+        if guidance.hasPrefix(prefix) { guidance.removeFirst(prefix.count) }
+        if state == .ready, guidance.lowercased() == "click a text box, then tap fn once" {
+            guidance = state.detail
+        }
+        detail.stringValue = guidance
+        detail.isHidden = guidance.isEmpty
         symbol.image = NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil)
+        symbol.contentTintColor = state == .inserted ? .systemGreen : (state == .error ? .systemOrange : .labelColor)
         symbol.isHidden = state == .listening
         meter.isHidden = state != .listening
         if state != .listening { meter.level = 0 }
         cancelButton.isHidden = ![.starting, .listening, .transcribing, .correcting, .inserting].contains(state)
         copyButton.isHidden = ![.ready, .pasteSent].contains(state)
         discardButton.isHidden = state != .ready
-        let width: CGFloat = state == .ready ? 520 : (state == .pasteSent || state == .error ? 430 : 360)
-        panel.setContentSize(NSSize(width: width, height: 78))
+        let visibleButtons = [cancelButton, copyButton, discardButton].filter { !$0.isHidden }
+        actionsWidth.constant = visibleButtons.reduce(0) { $0 + $1.intrinsicContentSize.width }
+            + CGFloat(max(0, visibleButtons.count - 1)) * 8
+        let size: NSSize
+        switch state {
+        case .ready: size = NSSize(width: 392, height: 56)
+        case .inserted: size = guidance.isEmpty ? NSSize(width: 168, height: 44) : NSSize(width: 324, height: 56)
+        case .pasteSent: size = NSSize(width: message == nil ? 276 : 372, height: message == nil ? 52 : 56)
+        case .error: size = NSSize(width: 380, height: 56)
+        default: size = NSSize(width: 268, height: 48)
+        }
+        panel.setContentSize(size)
         positionPanel()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.invalidateShadow()
         panel.orderFrontRegardless()
         if previousState != state || previousDetail != detail.stringValue {
-            announce("\(state.title). \(detail.stringValue)")
+            announce(guidance.isEmpty ? state.title : "\(state.title). \(guidance)")
         }
     }
 
@@ -225,7 +255,7 @@ final class DictationHUD {
         guard let screen = NSScreen.screens.first(where: { Self.id(of: $0) == displayID }) ?? Self.activeScreen else { return }
         displayID = Self.id(of: screen)
         let visible = screen.visibleFrame
-        let width = min(panel.frame.width, max(240, visible.width - 32))
+        let width = min(panel.frame.width, max(160, visible.width - 32))
         panel.setFrame(NSRect(x: visible.midX - width / 2, y: visible.minY + 24,
                               width: width, height: panel.frame.height), display: panel.isVisible)
     }
@@ -235,19 +265,50 @@ final class DictationHUD {
     @objc private func discard() { onDiscard?() }
 }
 
+private final class CapsuleSurface: NSVisualEffectView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.cornerCurve = .circular
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = bounds.height / 2
+        refreshEdge()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshEdge()
+    }
+
+    private func refreshEdge() {
+        let highContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        layer?.borderWidth = highContrast ? 1 : 0.5
+        layer?.borderColor = NSColor.labelColor.withAlphaComponent(highContrast ? 0.35 : 0.10).cgColor
+    }
+}
+
 private final class PassivePanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 }
 
 private final class PassiveButton: NSButton {
+    var isCloseAction = false
+    var isQuietAction = false
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var acceptsFirstResponder: Bool { false }
     override var needsPanelToBecomeKey: Bool { false }
 
     override var intrinsicContentSize: NSSize {
+        if isCloseAction { return NSSize(width: 24, height: 24) }
         let text = NSAttributedString(string: title, attributes: [.font: font ?? NSFont.systemFont(ofSize: 12)])
-        return NSSize(width: ceil(text.size().width) + 20, height: 26)
+        return NSSize(width: ceil(text.size().width) + 18, height: 26)
     }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
@@ -257,15 +318,32 @@ private final class PassiveButton: NSButton {
         // panel intentionally never activates, so draw an explicitly available
         // action while preserving NSButton's native hit testing and AX behavior.
         let highlighted = cell?.isHighlighted == true
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
-        NSColor.labelColor.withAlphaComponent(highlighted ? 0.22 : 0.10).setFill()
-        shape.fill()
-        NSColor.labelColor.withAlphaComponent(0.20).setStroke()
-        shape.lineWidth = 1
-        shape.stroke()
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                 xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        if !isQuietAction || highlighted {
+            NSColor.labelColor.withAlphaComponent(highlighted ? 0.16 : (isCloseAction ? 0.055 : 0.08)).setFill()
+            shape.fill()
+        }
+        if isCloseAction {
+            NSColor.secondaryLabelColor.setStroke()
+            let mark = NSBezierPath()
+            mark.lineWidth = 1.25
+            mark.lineCapStyle = .round
+            mark.move(to: NSPoint(x: bounds.midX - 3, y: bounds.midY - 3))
+            mark.line(to: NSPoint(x: bounds.midX + 3, y: bounds.midY + 3))
+            mark.move(to: NSPoint(x: bounds.midX - 3, y: bounds.midY + 3))
+            mark.line(to: NSPoint(x: bounds.midX + 3, y: bounds.midY - 3))
+            mark.stroke()
+            return
+        }
+        if !isQuietAction {
+            NSColor.labelColor.withAlphaComponent(0.12).setStroke()
+            shape.lineWidth = 0.5
+            shape.stroke()
+        }
         let text = NSAttributedString(string: title, attributes: [
             .font: font ?? NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: isEnabled ? NSColor.labelColor : NSColor.tertiaryLabelColor
+            .foregroundColor: isEnabled ? (isQuietAction ? NSColor.secondaryLabelColor : NSColor.labelColor) : NSColor.tertiaryLabelColor
         ])
         let size = text.size()
         text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
@@ -289,18 +367,18 @@ private final class AudioLevelView: NSView {
     override func accessibilityValue() -> Any? { level > 0.008 ? "Sound detected" : "Quiet" }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.controlAccentColor.setFill()
+        NSColor.systemTeal.setFill()
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             // A fixed-size dot indicates activity without moving bars.
-            (level > 0.008 ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor).setFill()
-            NSBezierPath(ovalIn: NSRect(x: bounds.midX - 5, y: bounds.midY - 5, width: 10, height: 10)).fill()
+            (level > 0.008 ? NSColor.systemTeal : NSColor.tertiaryLabelColor).setFill()
+            NSBezierPath(ovalIn: NSRect(x: bounds.midX - 3.5, y: bounds.midY - 3.5, width: 7, height: 7)).fill()
             return
         }
         let normalized = max(0, min(1, (20 * log10(max(CGFloat(level), 0.0001)) + 55) / 45))
         for index in 0..<5 {
             let emphasis = CGFloat([0.55, 0.8, 1, 0.8, 0.55][index])
-            let height = 4 + 20 * normalized * emphasis
-            let rect = NSRect(x: CGFloat(index) * 5, y: bounds.midY - height / 2, width: 3, height: height)
+            let height = 3 + 13 * normalized * emphasis
+            let rect = NSRect(x: CGFloat(index) * 4, y: bounds.midY - height / 2, width: 2.2, height: height)
             NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
         }
     }

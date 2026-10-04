@@ -34,6 +34,20 @@ import Foundation
         assert((row["milliseconds"] as! [String: Double])["stopTo_dispatched"] != nil)
         assert(row["outcome"] as? String == "verified")
         assert(!String(decoding: data, as: UTF8.self).contains("Keep my words"))
-        print("Session and numeric diagnostics: 22 assertions passed")
+        var feedback = CompletionFeedback()
+        feedback.begin(delivery)
+        assert(feedback.isVisible(for: delivery))
+        feedback.dismiss(delivery)
+        assert(!feedback.confirm(delivery)) // late verification must not reopen
+        assert(!feedback.isVisible(for: delivery))
+        feedback.begin(next)
+        feedback.dismiss(delivery) // an old timer cannot dismiss a new delivery
+        assert(feedback.isVisible(for: next))
+        assert(!feedback.confirm(delivery))
+        assert(feedback.confirm(next))
+        assert(!feedback.confirm(next)) // only one brief confirmation per paste
+        feedback.dismiss(next)
+        assert(!feedback.isVisible(for: next))
+        print("Session, completion feedback, and numeric diagnostics: 30 assertions passed")
     }
 }

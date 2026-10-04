@@ -15,13 +15,14 @@ struct AppMain {
 }
 
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate {
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var state = DictationSessionState()
     private var phase: DictationSessionState.Phase { state.phase }
     private var session: UUID { state.id }
     private var lastText: String? { state.lastText }
     private let hud = DictationHUD()
     private let metrics = InteractionMetrics()
+    private var completionFeedback = CompletionFeedback()
     private let hotkey = FnHotkey()
     private let recorder = AudioRecorder()
     private let inserter = TextInserter()
@@ -90,6 +91,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { showSetup() }
         return true
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === setupWindow,
+              allPermissions, monitoring else { return }
+        window.orderOut(nil)
     }
 
     private var missingPermissions: [String] {
@@ -248,8 +255,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         hud.onCopy = { [weak self] in self?.copyLast() }
         hud.onDiscard = { [weak self] in self?.discardPending() }
         recorder.onLevel = { [weak self] level in self?.hud.updateLevel(level) }
-        hotkey.onInputActivity = { [weak self] in self?.inserter.invalidateCapture() }
-        inserter.onFocusChanged = { [weak self] in self?.hotkey.invalidateGesture() }
+        hotkey.onInputActivity = { [weak self] in
+            guard let self else { return }
+            self.inserter.invalidateCapture()
+            // Let clicks on Copy finish before dismissing the passive panel.
+            if !self.hud.panel.frame.contains(NSEvent.mouseLocation) { self.dismissCompletedFeedback() }
+        }
+        inserter.onFocusChanged = { [weak self] in
+            self?.hotkey.invalidateGesture()
+            self?.dismissCompletedFeedback()
+        }
     }
 
     private func startDictation() {
@@ -263,6 +278,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         let originalPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let token = state.begin() else { return }
+        setupWindow?.orderOut(nil)
         metrics.begin(token); dismissTask?.cancel()
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         hud.show(.starting, on: screen); metrics.mark("indicatorRequested", token)
@@ -366,6 +382,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard !copyInProgress else { showPending("Finishing clipboard copy…"); return }
         guard allPermissions, monitoring else { showPending("Text saved · finish permission setup to place it"); return }
         guard let token = state.beginPlacement() else { return }
+        setupWindow?.orderOut(nil)
         metrics.begin(token)
         syncHotkey(); updateStatus("Checking destination…"); hud.show(.inserting)
         let anchor = inserter.beginCapture()
@@ -390,20 +407,25 @@ final class AppController: NSObject, NSApplicationDelegate {
                     metrics.mark("dispatched", token); metrics.mark("nextCaptureReady", token)
                     processingTask = nil; targetTask = nil; recoveryNeeded = false
                     syncHotkey(); updateStatus("Paste sent · double-tap Fn for another dictation")
+                    completionFeedback.begin(token)
                     hud.show(.pasteSent)
-                }, onVerified: { [weak self] in self?.metrics.mark("verifiedVisible", token) })
+                    dismissHUD(after: 1.8, for: token)
+                }, onVerified: { [weak self] in
+                    guard let self else { return }
+                    self.metrics.mark("verifiedVisible", token)
+                    guard token == self.session, self.phase == .idle,
+                          self.completionFeedback.confirm(token) else { return }
+                    self.hud.show(.inserted)
+                    self.dismissHUD(after: 0.9, for: token)
+                })
                 let current = state.finishDelivery(token)
                 metrics.finish(result == .verified ? "verified" : "sentUnverified", token)
                 guard current else { return }
                 if result == .sentWithoutVerification {
                     recoveryNeeded = true
                     updateStatus("Paste sent · check the text box; Copy last result is available")
-                    hud.show(.pasteSent, message: "Paste sent · check the text box")
-                    dismissHUD(after: 5, for: token)
                 } else {
                     updateStatus(note.map { "Inserted · \($0)" } ?? permissionStatus)
-                    hud.show(.inserted, message: note.map { "Inserted · \($0)" })
-                    dismissHUD(after: 1.5, for: token)
                 }
             } catch {
                 // Cancellation before dispatch preserves an explicitly waiting
@@ -429,8 +451,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         dismissTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled, let self, self.session == token, self.phase == .idle else { return }
+            self.completionFeedback.dismiss(token)
             self.hud.hide()
         }
+    }
+
+    private func dismissCompletedFeedback() {
+        guard phase == .idle, state.pendingText == nil,
+              let kind = hud.state, [.inserted, .pasteSent, .error].contains(kind) else { return }
+        dismissTask?.cancel()
+        completionFeedback.dismiss(session)
+        hud.hide()
     }
 
     @objc private func cancelDictation() {
@@ -603,6 +634,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 500),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Local Dictation"; window.isReleasedWhenClosed = false; window.center()
+        window.delegate = self
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
         let title = NSTextField(labelWithString: "Speak into any text box")

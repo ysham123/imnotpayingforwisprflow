@@ -16,7 +16,7 @@ The release executable compiles with Swift 5.10. A complete candidate bundle has
 | Area | Result |
 |---|---|
 | Fn gestures | 30 regressions, including delayed pending placement, double-tap refusal, interruption, and synthetic paste events |
-| Session state and timing export | 22 assertions covering protected pending results, new capture before prior delivery completes, stale receipts, cancellation, discard, and content-free JSON passed |
+| Session state and timing export | 30 assertions covering protected pending results, new capture before prior delivery completes, stale receipts, cancellation, discard, content-free JSON, and completion feedback that cannot reopen after dismissal passed |
 | Target-inspection cancellation | 2 groups passed: canceled queued and already-canceled requests skip Accessibility work without poisoning the next request |
 | Correction validation | 32 existing conservative-cleanup cases passed |
 | Owned-service caching | 9 metadata, ownership, invalidation, retention, and unload checks passed |
@@ -26,8 +26,8 @@ The release executable compiles with Swift 5.10. A complete candidate bundle has
 | Native insertion | 15 groups passed, including pinned identity capture, off-main inspection, away-and-return invalidation, queued delivery and cancellation |
 | WebKit insertion | 16 cases passed, including async pinned input/rich-editor capture and explicit placement |
 | Electron insertion | 16 cases passed in the final isolated run |
-| Floating indicator | 6 checks passed: all states and real action clicks preserve editor focus; changed guidance is announced and level updates stay silent |
-| Packaging/installer | 4 package rollback and 8 installer failure/replacement checks passed; these fault tests mock signing |
+| Floating indicator | 7 checks passed: compact capsule geometry, all states and real action clicks preserve editor focus; changed guidance is announced and level updates stay silent |
+| Packaging/installer | 4 package rollback, 7 source/output integrity, and 8 installer failure/replacement checks passed; rollback fault tests mock signing |
 
 One earlier Electron run, overlapping other test/model activity, produced an unexplained textarea selection mismatch. The complete isolated repeat passed without a product-code change. A further 12 focused selection replacements (six asynchronous anchors and six legacy captures, including Unicode/emoji and multiline text) also matched DOM/Accessibility ranges, delivered one paste each, and restored the clipboard. This remains a validation limitation; the repeat does not establish a root cause or a fix for that initial result.
 
@@ -61,6 +61,10 @@ Raw numeric data: [v1.1.1 baseline](benchmarks/backend-baseline-v1.1.1.json), [v
 ### Correction quality
 
 The unchanged real models and cleanup rules passed the same 11 exact text-correction cases in both v1.1.1 and v1.2. Coverage includes “Add 3, I mean 2 items,” explicit weekday/time revisions across a sentence boundary, names with accents, identifiers, negation, repeated words, and prompt-like dictated content. These are direct cleanup tests, not a broad speech-recognition accuracy benchmark or proof of accented-name recognition. The [baseline](benchmarks/real-cleanup-baseline-v1.1.1.json) and [candidate](benchmarks/real-cleanup-candidate-v1.2.0.json) reports contain only pass flags and timings. The synthetic case definitions are in `Tests/CleanupModelSmoke.swift`.
+
+### Packaging integrity
+
+During release preparation, a source file reported a nonzero size but returned an empty content read in the Documents checkout. The resulting empty installer was caught before publication. Packaging now uses counted reads, source/output verification, required installer markers, and ZIP command-byte/executable checks. Empty and truncated reads are covered by regression tests, and release preparation continues from a local checkout outside Documents. No invalid installer was published.
 
 ### Remaining release gates
 
