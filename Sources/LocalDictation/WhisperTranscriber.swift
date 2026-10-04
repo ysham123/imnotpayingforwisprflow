@@ -1,5 +1,8 @@
 import Foundation
 import Darwin
+#if canImport(DictationCore)
+import DictationCore
+#endif
 
 enum DictationError: LocalizedError {
     case message(String)
@@ -20,6 +23,8 @@ final class WhisperTranscriber {
     private var cancellationGeneration: UInt64 = 0
     private var workerGeneration: UInt64?
     private var timing: Timing?
+    private var vocabularyOverflowIDs: Set<UUID> = []
+    private var workerProtocol = 1
     private var input: FileHandle?
     private var output: FileHandle?
     // A worker may split a JSON line over writes or coalesce multiple lines.
@@ -31,16 +36,20 @@ final class WhisperTranscriber {
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
 
-    init(resources: URL, startupTimeout: TimeInterval = 90, requestTimeout: TimeInterval = 120) {
+    init(resources: URL, models: URL? = nil, startupTimeout: TimeInterval = 90, requestTimeout: TimeInterval = 120) {
         self.startupTimeout = startupTimeout
         self.requestTimeout = requestTimeout
         executable = resources.appendingPathComponent("whisper-worker")
-        model = resources.appendingPathComponent("Models/ggml-large-v3-turbo-q8_0.bin")
+        model = (models ?? resources.appendingPathComponent("Models")).appendingPathComponent("ggml-large-v3-turbo-q8_0.bin")
     }
 
     var lastTiming: Timing? {
         processLock.lock(); defer { processLock.unlock() }
         return timing
+    }
+
+    var lastVocabularyOverflowIDs: Set<UUID> {
+        processLock.lock(); defer { processLock.unlock() }; return vocabularyOverflowIDs
     }
 
     func rewarm() async throws { try await prepare() }
@@ -76,8 +85,9 @@ final class WhisperTranscriber {
         }, onCancel: { self.cancel(expectedGeneration: generation) })
     }
 
-    func transcribe(_ samples: [Float]) async throws -> String {
+    func transcribe(_ samples: [Float], vocabulary: VocabularySnapshot = .empty) async throws -> String {
         try Task.checkCancellation()
+        let vocabulary = try VocabularySnapshot(entries: vocabulary.entries, revision: vocabulary.revision)
         let generation = currentGeneration()
         return try await withTaskCancellationHandler(operation: {
             try Task.checkCancellation()
@@ -94,6 +104,17 @@ final class WhisperTranscriber {
                         }
                         var count = UInt32(samples.count).littleEndian
                         var packet = withUnsafeBytes(of: &count) { Data($0) }
+                        if self.workerProtocol == 2 {
+                            var hintCount = UInt32(vocabulary.entries.count).littleEndian
+                            withUnsafeBytes(of: &hintCount) { packet.append(contentsOf: $0) }
+                            for entry in vocabulary.entries {
+                                packet.append(contentsOf: entry.id.uuidString.utf8)
+                                let term = Data(entry.preferredSpelling.utf8)
+                                var length = UInt32(term.count).littleEndian
+                                withUnsafeBytes(of: &length) { packet.append(contentsOf: $0) }
+                                packet.append(term)
+                            }
+                        }
                         samples.withUnsafeBytes { packet.append(contentsOf: $0) }
                         let deadline = ProcessInfo.processInfo.systemUptime + self.requestTimeout
                         try self.write(packet, to: input.fileDescriptor, deadline: deadline, generation: generation)
@@ -104,10 +125,22 @@ final class WhisperTranscriber {
                         guard let text = result["text"] as? String else {
                             throw DictationError.message("The speech engine returned an invalid result.")
                         }
+                        var overflow = Set(vocabulary.entries.map(\.id))
+                        if self.workerProtocol == 2 {
+                            guard let reported = result["vocabulary_overflow"] as? [String] else {
+                                throw DictationError.message("The speech engine returned invalid vocabulary status.")
+                            }
+                            let ids = reported.compactMap(UUID.init(uuidString:))
+                            guard ids.count == reported.count, Set(ids).isSubset(of: overflow) else {
+                                throw DictationError.message("The speech engine returned invalid vocabulary IDs.")
+                            }
+                            overflow = Set(ids)
+                        }
                         let finished = ProcessInfo.processInfo.systemUptime
                         self.processLock.lock()
                         self.timing = Timing(startupSeconds: prepared - started, writeSeconds: written - prepared,
                                              recognitionSeconds: finished - written, totalSeconds: finished - started)
+                        self.vocabularyOverflowIDs = overflow
                         self.processLock.unlock()
                         continuation.resume(returning: text.trimmingCharacters(in: .whitespacesAndNewlines))
                     } catch { self.reset(expectedGeneration: generation); continuation.resume(throwing: error) }
@@ -184,6 +217,11 @@ final class WhisperTranscriber {
         guard reply["ready"] as? Bool == true else {
             throw DictationError.message(reply["error"] as? String ?? "The speech engine could not start.")
         }
+        let version = (reply["protocol"] as? Int) ?? 1
+        guard version == 1 || version == 2 else {
+            throw DictationError.message("The speech worker protocol is unsupported. Restore the complete app.")
+        }
+        workerProtocol = version
     }
 
     private func waitForIO(_ fd: Int32, events: Int16, deadline: TimeInterval,
@@ -256,10 +294,12 @@ final class WhisperTranscriber {
         if let expectedGeneration, let workerGeneration, workerGeneration != expectedGeneration {
             processLock.unlock(); return
         }
-        let worker = process; process = nil; workerGeneration = nil; timing = nil; processLock.unlock()
+        let worker = process; process = nil; workerGeneration = nil; timing = nil
+        vocabularyOverflowIDs.removeAll(); processLock.unlock()
         if let worker { Self.terminate(worker) }
         try? input?.close(); try? output?.close()
         input = nil; output = nil
         readBuffer.removeAll(keepingCapacity: true)
+        workerProtocol = 1
     }
 }

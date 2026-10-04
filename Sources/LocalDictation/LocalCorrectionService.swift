@@ -7,13 +7,15 @@ final class LocalCorrectionService {
     private var process: Process?
     private var retiring: [Process] = []
     private let resources: URL
+    private let models: URL
     private let serviceEndpoint: URL
     private let lease: CorrectionServiceLease
     private var startTask: Task<Void, Error>?
     private var operationGeneration: UInt64 = 0
 
-    init(resources: URL, endpoint: URL = LocalCorrectionService.endpoint) {
+    init(resources: URL, models: URL? = nil, endpoint: URL = LocalCorrectionService.endpoint) {
         self.resources = resources; serviceEndpoint = endpoint
+        self.models = models ?? resources.appendingPathComponent("Models")
         lease = CorrectionServiceLease(endpoint: endpoint)
     }
 
@@ -72,10 +74,10 @@ final class LocalCorrectionService {
         terminateOwnedProcess()
         try await drainRetiredProcesses(generation: generation)
         let executable = resources.appendingPathComponent("ollama")
-        let models = resources.appendingPathComponent("Models/ollama")
+        let models = self.models.appendingPathComponent("ollama")
         guard FileManager.default.isExecutableFile(atPath: executable.path),
               FileManager.default.fileExists(atPath: models.path) else {
-            throw DictationError.message("The bundled correction model is missing. Restore the complete app.")
+            throw DictationError.message("The correction engine or local model is missing. Retry model setup.")
         }
         let task = Process()
         task.executableURL = executable; task.arguments = ["serve"]

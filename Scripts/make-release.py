@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create verified, GitHub-sized app parts and an installer from a working app."""
+"""Create a thin native-app DMG while preserving the app's signing identity."""
 import argparse
 import hashlib
 import io
@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 from package_app import (copy_bytes, hash_file_checked, read_bytes_checked,
                          read_text_checked, validate_executable, validate_runtime,
-                         validate_source_resources, write_bytes_checked)
+                         validate_source_resources, validate_model_manifest, write_bytes_checked)
 
 class PartsWriter:
     def __init__(self, output, base, limit=1_800_000_000):
@@ -135,50 +135,77 @@ def write_installer(source, output, manifest, *, template=None):
         write_bytes_checked(output/'SHA256SUMS', ('\n'.join(rows)+'\n').encode('utf-8'))
 
 
+def designated_requirement(app):
+    result = subprocess.run(['codesign', '--display', '-r-', str(app)], check=True,
+                            capture_output=True, text=True)
+    match = re.search(r'(?m)^\s*(?:#\s*)?designated => (.+)$', result.stderr + result.stdout)
+    if not match: raise RuntimeError('The app has no readable designated requirement')
+    return match[1]
+
+
+def validate_release_app(app, requirement=None):
+    info = plistlib.loads(read_bytes_checked(app / 'Contents/Info.plist'))
+    if (info.get('CFBundleIdentifier') != 'dev.yosef.localdictation'
+            or info.get('CFBundleExecutable') != 'LocalDictation'
+            or info.get('LSMinimumSystemVersion') != '14.0'):
+        raise RuntimeError('Only the public Apple Silicon macOS 14+ app may be released')
+    if (app / 'Contents/Resources/Models').exists():
+        raise RuntimeError('Package a thin app before creating the DMG; model weights belong in Application Support')
+    for name in ['Contents/MacOS/LocalDictation', 'Contents/Resources/whisper-worker']:
+        validate_executable(app / name)
+    validate_runtime(app / 'Contents/Resources', require_models=False)
+    validate_model_manifest(app / 'Contents/Resources/ModelManifest.json')
+    command = ['codesign', '--verify', '--deep', '--strict']
+    if requirement: command += ['--test-requirement', '=' + requirement]
+    subprocess.run(command + [str(app)], check=True)
+    return info
+
+
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Create a thin native-app DMG without replacing its signature')
     parser.add_argument('app', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--tag', required=True)
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
-    # Fail before expensive model verification/copies when synced source files
-    # report bytes in stat() but return an empty or truncated content stream.
-    template = read_installer_template(source)
     validate_source_resources(source)
-    info = plistlib.loads(read_bytes_checked(args.app / 'Contents/Info.plist'))
+    info = validate_release_app(args.app)
     version = info['CFBundleShortVersionString']
-    if args.tag != 'v' + version: raise RuntimeError('Tag must match the app version')
-    for executable in [args.app / 'Contents/MacOS/LocalDictation', args.app / 'Contents/Resources/whisper-worker']:
-        validate_executable(executable)
-    validate_runtime(args.app / 'Contents/Resources')
-    subprocess.run(['codesign','--verify','--deep','--strict',str(args.app)],check=True)
-    args.output.mkdir(parents=True,exist_ok=True)
+    if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,2}', version) or args.tag != 'v' + version:
+        raise RuntimeError('Tag must match the numeric app version')
+    requirement = designated_requirement(args.app)
+    args.output.mkdir(parents=True, exist_ok=True)
     if any(args.output.iterdir()): raise RuntimeError('Choose an empty release output directory')
-    with tempfile.TemporaryDirectory(prefix='localdictation-release-') as temp:
-        stage = Path(temp) / 'Local Dictation.app'
-        copy_bytes(args.app,stage)
-        copy_bytes(source / 'Licenses', stage / 'Contents/Resources/Licenses')
-        copy_bytes(source / 'LICENSE', stage / 'Contents/Resources/Licenses/LocalDictation-MIT.txt')
-        copy_bytes(source / 'THIRD_PARTY_NOTICES.txt', stage / 'Contents/Resources/THIRD_PARTY_NOTICES.txt')
-        validate_runtime(stage / 'Contents/Resources', verify_digests=False)
-        # Only release-copy resource notices change. The installed app is untouched.
-        subprocess.run(['codesign','--force','--timestamp=none','--sign','-',str(stage)],check=True)
-        subprocess.run(['codesign','--verify','--deep','--strict',str(stage)],check=True)
-        writer = PartsWriter(args.output, f'Local-Dictation-{version}-macos-arm64.tar')
-        def clean(info):
-            if info.issym() or info.islnk(): raise RuntimeError('Unexpected app symlink')
-            info.uid=0; info.gid=0; info.uname=''; info.gname=''; info.mtime=0
-            info.pax_headers={}
-            return info
-        with tarfile.open(fileobj=writer,mode='w|',format=tarfile.PAX_FORMAT) as archive:
-            archive.add(stage,arcname=stage.name,filter=clean)
-        writer.finish_part()
-        manifest={'tag':args.tag,'version':version,'archive_sha256':writer.archive_hash.hexdigest(),'parts':writer.entries}
-        manifest_bytes = (json.dumps(manifest,indent=2)+'\n').encode('utf-8')
-        write_bytes_checked(args.output/'release-manifest.json', manifest_bytes)
-        write_bytes_checked(source/'Distribution/release-manifest.json', manifest_bytes)
-        write_installer(source, args.output, manifest, template=template)
-        print(json.dumps(manifest,indent=2))
+    image = args.output / 'Local-Dictation.dmg'
+    with tempfile.TemporaryDirectory(prefix='localdictation-dmg-') as temp:
+        content = Path(temp) / 'content'; content.mkdir()
+        stage = content / 'Local Dictation.app'
+        copy_bytes(args.app, stage)
+        # Every byte of the signed app is preserved. Never sign it ad-hoc here.
+        validate_release_app(stage, requirement)
+        readme = ('LOCAL DICTATION ' + version + '\n\nOpen Local Dictation.app and choose Install & Open.\n'
+                  'The installed app downloads and verifies about 3.4 GB of local models\n'
+                  'into Application Support on first use. Existing verified models are reused.\n'
+                  'Then grant Microphone, Accessibility, and Input Monitoring in Settings.\n'
+                  'This community app is not notarized by Apple. If macOS blocks it,\n'
+                  'review System Settings > Privacy & Security > Open Anyway.\n'
+                  'Installation does not change Gatekeeper, certificate trust, or permissions.\n')
+        write_bytes_checked(content / 'READ ME FIRST.txt', readme.encode())
+        subprocess.run(['hdiutil', 'create', '-volname', 'Local Dictation', '-srcfolder', str(content),
+                        '-format', 'UDZO', '-ov', str(image)], check=True)
+        hash_file_checked(image)  # Reject empty/truncated image reads before verification.
+        subprocess.run(['hdiutil', 'verify', str(image)], check=True)
+    model_data = read_bytes_checked(args.app / 'Contents/Resources/ModelManifest.json')
+    write_bytes_checked(args.output / 'model-manifest.json', model_data)
+    manifest = {'tag': args.tag, 'version': version, 'build': info['CFBundleVersion'],
+                'distribution': 'thin-dmg', 'designated_requirement': requirement,
+                'model_manifest_sha256': hashlib.sha256(model_data).hexdigest(),
+                'assets': [{'name': image.name, 'sha256': hash_file_checked(image), 'bytes': image.stat().st_size}]}
+    write_bytes_checked(args.output / 'release-manifest.json', (json.dumps(manifest, indent=2) + '\n').encode())
+    rows = [hash_file_checked(path) + '  ' + path.name for path in sorted(args.output.iterdir())]
+    write_bytes_checked(args.output / 'SHA256SUMS', ('\n'.join(rows) + '\n').encode())
+    print(json.dumps(manifest, indent=2))
 
-if __name__=='__main__': main()
+
+if __name__ == '__main__':
+    main()

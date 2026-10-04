@@ -12,6 +12,8 @@ import Darwin
             throw DictationError.message("Usage: benchmark resources audio.wav report.json runs idle_seconds")
         }
         let resources = URL(fileURLWithPath: args[1])
+        let models = ProcessInfo.processInfo.environment["LOCAL_DICTATION_MODELS"]
+            .map { URL(fileURLWithPath: $0) } ?? resources.appendingPathComponent("Models")
         let warmRuns = args.count > 6 ? (Int(args[6]) ?? runs) : runs
         guard warmRuns > 0 else { throw DictationError.message("Warm run count must be positive.") }
         let fixture = try samples(URL(fileURLWithPath: args[2]))
@@ -30,7 +32,7 @@ import Darwin
         server.arguments = ["serve"]
         var environment = ProcessInfo.processInfo.environment
         environment["OLLAMA_HOST"] = "127.0.0.1:11439"
-        environment["OLLAMA_MODELS"] = resources.appendingPathComponent("Models/ollama").path
+        environment["OLLAMA_MODELS"] = models.appendingPathComponent("ollama").path
         environment["OLLAMA_NO_CLOUD"] = "1"; environment["OLLAMA_NOPRUNE"] = "1"
         environment["OLLAMA_NUM_PARALLEL"] = "1"; environment["OLLAMA_KEEP_ALIVE"] = "-1"
         server.environment = environment
@@ -61,7 +63,11 @@ import Darwin
         for (length, audio) in [("short", fixture), ("long", Array(repeating: fixture, count: 3).flatMap { $0 })] {
             for condition in ["warm", "cold", "idle", "post_cancel"] {
                 let conditionRuns = condition == "warm" ? warmRuns : runs
+                #if BASELINE
                 let engine = WhisperTranscriber(resources: resources)
+                #else
+                let engine = WhisperTranscriber(resources: resources, models: models)
+                #endif
                 defer { engine.shutdown() }
                 if condition != "cold" {
                     try await engine.prepare()

@@ -48,7 +48,7 @@ http.server.HTTPServer(('127.0.0.1',port),Server).serve_forever()
 PY
 chmod +x "$resources/ollama"
 swiftc -swift-version 5 -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "$source_dir/Sources/LocalDictation/CleanupClient.swift" \
+  "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/LocalDictation/CleanupClient.swift" \
   "$source_dir/Sources/LocalDictation/WhisperTranscriber.swift" \
   "$source_dir/Sources/LocalDictation/LocalCorrectionService.swift" \
   "$source_dir/Tests/CorrectionLifecycleSmoke.swift" -o "$build_dir/lifecycle-smoke"

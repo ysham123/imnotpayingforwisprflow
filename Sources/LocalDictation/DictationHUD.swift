@@ -65,7 +65,10 @@ final class DictationHUD {
     private let copyButton = PassiveButton(title: "Copy", target: nil, action: nil)
     private let discardButton = PassiveButton(title: "Discard", target: nil, action: nil)
     private var displayID: NSNumber?
+    private(set) var sessionID: UUID?
+    private var originPinned = false
     private var screenObserver: NSObjectProtocol?
+    private var spaceObserver: NSObjectProtocol?
     private let announce: (String) -> Void
     private var actionsWidth: NSLayoutConstraint!
 
@@ -81,8 +84,8 @@ final class DictationHUD {
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllApplications, .canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -177,17 +180,80 @@ final class DictationHUD {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.positionPanel() }
+            MainActor.assumeIsolated { self?.refreshCurrentSession() }
+        }
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshCurrentSession() }
         }
     }
 
     deinit {
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
+    }
+
+    /// Start immediately on a local fallback display. The original field's
+    /// window may resolve asynchronously; it can pin this session once only.
+    func beginSession(_ id: UUID, fallbackScreen: NSScreen? = nil) {
+        sessionID = id
+        originPinned = false
+        displayID = Self.id(of: fallbackScreen ?? Self.activeScreen)
+        state = nil
+    }
+
+    /// AX window bounds use global Quartz coordinates. CGDisplayBounds uses
+    /// the same coordinate system, including displays above/left of primary.
+    func pinOrigin(_ windowFrame: CGRect, for id: UUID) {
+        guard sessionID == id, state != nil, !originPinned else { return }
+        let displays = NSScreen.screens.compactMap { screen -> ScreenRegion? in
+            guard let number = Self.id(of: screen) else { return nil }
+            return ScreenRegion(id: number.uint32Value, frame: CGDisplayBounds(number.uint32Value))
+        }
+        guard let selected = Self.displayID(intersecting: windowFrame, regions: displays) else { return }
+        originPinned = true
+        displayID = NSNumber(value: selected)
+        refreshVisibility(for: id)
+    }
+
+    /// A Space/display event can reorder an existing status surface, but never
+    /// revive a dismissed result or a previous session's asynchronous request.
+    func refreshVisibility(for id: UUID) {
+        guard sessionID == id, state != nil else { return }
+        positionPanel()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.invalidateShadow()
+        panel.orderFrontRegardless()
+    }
+
+    struct ScreenRegion {
+        let id: UInt32
+        let frame: CGRect
+    }
+
+    static func displayID(intersecting rect: CGRect, regions: [ScreenRegion]) -> UInt32? {
+        guard rect.width > 0, rect.height > 0,
+              [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else { return nil }
+        var best: UInt32?
+        var bestArea: CGFloat = 0
+        for region in regions {
+            let intersection = rect.intersection(region.frame)
+            let area = intersection.isNull ? 0 : intersection.width * intersection.height
+            if area > bestArea { best = region.id; bestArea = area }
+        }
+        return best
+    }
+
+    private func refreshCurrentSession() {
+        guard let sessionID else { return }
+        refreshVisibility(for: sessionID)
     }
 
     /// Pass a screen only when starting a new session. Further state changes
     /// preserve its display, even if the pointer moves to a different monitor.
     func show(_ state: State, message: String? = nil, on screen: NSScreen? = nil) {
+        if sessionID == nil { beginSession(UUID(), fallbackScreen: screen) }
         let previousState = self.state
         let previousDetail = detail.stringValue
         self.state = state
@@ -241,8 +307,10 @@ final class DictationHUD {
     }
 
     func hide() {
-        panel.orderOut(nil)
         state = nil
+        sessionID = nil
+        originPinned = false
+        panel.orderOut(nil)
         meter.level = 0
     }
 

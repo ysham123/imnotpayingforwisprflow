@@ -34,6 +34,15 @@ jobs:
         run: bash Scripts/test-shortcut-recorder.sh .test-build/shortcut-recorder --compile-only
       - name: Session and diagnostics regressions
         run: bash Scripts/test-session.sh
+      - name: Listener recovery and permission diagnostics
+        run: bash Scripts/test-permissions.sh
+      - name: Custom words and request hints
+        run: |
+          bash Scripts/test-vocabulary.sh
+          bash Scripts/test-vocabulary-worker.sh
+          bash Scripts/test-native-vocabulary-worker.sh
+      - name: External models and native install transaction
+        run: bash Scripts/test-runtime-setup.sh
       - name: Target inspection cancellation regressions
         run: bash Scripts/test-target-inspector.sh
       - name: Cleanup regressions
@@ -53,4 +62,6 @@ jobs:
       - name: Packaging and installer rollback regressions
         run: |
           python3 Tests/PackagingSmoke.py
+          python3 Tests/ThinReleaseSmoke.py
+          python3 Tests/RealSigningSmoke.py
           python3 Tests/InstallerSmoke.py

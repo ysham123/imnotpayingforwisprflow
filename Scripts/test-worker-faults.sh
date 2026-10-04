@@ -36,5 +36,5 @@ while True:
         print(json.dumps({'text': 'recovered'}), flush=True)
 PY
 chmod +x "$resources/whisper-worker"
-swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" "$source_dir/Sources/LocalDictation/WhisperTranscriber.swift" "$source_dir/Tests/TranscriberFaultSmoke.swift" -o "$build_dir/fault-smoke"
+swiftc -parse-as-library -module-cache-path "$build_dir/ModuleCache" "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/LocalDictation/WhisperTranscriber.swift" "$source_dir/Tests/TranscriberFaultSmoke.swift" -o "$build_dir/fault-smoke"
 "$build_dir/fault-smoke" "$resources"

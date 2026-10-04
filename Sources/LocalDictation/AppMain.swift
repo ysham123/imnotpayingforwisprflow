@@ -35,6 +35,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var cancelMenu: NSMenuItem!
     private var discardMenu: NSMenuItem!
     private var retryMenu: NSMenuItem!
+    private var retryListenerMenu: NSMenuItem!
+    private var listenerFailure: HotkeyStartError?
+    private var listenerAttempts = 0
+    private var listenerRetryAfter: TimeInterval = 0
+    private var lastInputPermission: Bool?
+    private let permissionDiagnostics = PermissionDiagnostics()
     private var setupWindow: NSWindow?
     private var setupStatus: NSTextField?
     private var setupSubtitle: NSTextField?
@@ -71,38 +77,124 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var monitoring = false
     private var lastPermissionState: String?
     private var status = "Starting local models…"
+    private let installController = InstallController()
+    private var modelStore: ModelStore?
+    private var modelPreparationTask: Task<Void, Never>?
+    private var modelPreparationStatus: String?
+    private var runtimeInitialized = false
+    private var vocabulary = VocabularyPreferences.load()
+    private var sessionVocabulary = VocabularySnapshot.empty
+    private var customWordsController: CustomWordsController?
+    private var editingVocabulary = false
+    private var modelProgress: NSProgressIndicator?
+    private var modelActionButton: NSButton?
+    private var listenerRetryButton: NSButton?
+    private var permissionButtons: [String: NSButton] = [:]
+    private var continueSetupButton: NSButton?
+    private var guidedPermissionStep: String?
+    private var guidedPermissionSetup = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let resources = ProcessInfo.processInfo.environment["LOCAL_DICTATION_RESOURCES"]
             .map { URL(fileURLWithPath: $0) } ?? Bundle.main.resourceURL!
-        transcriber = WhisperTranscriber(resources: resources)
-        correctionService = LocalCorrectionService(resources: resources)
-        cleanup = correctionService.makeCleanupClient()
+        if CommandLine.arguments.contains("--diagnostics") || CommandLine.arguments.contains("--paste-test") {
+            configureMenu()
+            let models = ProcessInfo.processInfo.environment["LOCAL_DICTATION_MODELS"]
+                .map { URL(fileURLWithPath: $0) }
+                ?? (ProcessInfo.processInfo.environment["LOCAL_DICTATION_RESOURCES"] != nil
+                    ? resources.appendingPathComponent("Models") : (try? RuntimePaths.application().models))
+            transcriber = WhisperTranscriber(resources: resources, models: models)
+            correctionService = LocalCorrectionService(resources: resources, models: models)
+            cleanup = correctionService.makeCleanupClient()
+            runtimeInitialized = true
+            if CommandLine.arguments.contains("--diagnostics") { runDiagnostics(resources: resources) }
+            else { runPasteTest() }
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard await installController.ensureInstalled() else { NSApp.terminate(nil); return }
+            guard claimInstalledInstance() else { NSApp.terminate(nil); return }
+            initializeInstalledRuntime()
+        }
+    }
+
+    private func claimInstalledInstance() -> Bool {
+        guard let identifier = Bundle.main.bundleIdentifier else { return true }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && !$0.isTerminated }
+        guard let other = others.first else { return true }
+        if let url = other.bundleURL {
+            let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = false
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
+        }
+        return false
+    }
+
+    private func initializeInstalledRuntime() {
         configureMenu()
-        if CommandLine.arguments.contains("--diagnostics") {
-            runDiagnostics(resources: resources); return
-        }
-        if CommandLine.arguments.contains("--paste-test") {
-            runPasteTest(); return
-        }
         if case .failure(let error) = hotkey.configure(shortcutConfiguration) {
             shortcutFailure = error.localizedDescription
         }
         configureHUD()
         updateShortcutAppearance()
-        configureLifecycle()
-        Task { await prepareEngines() }
         recorder.onAutomaticStop = { [weak self] in self?.finishDictation() }
         timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshPermissions() }
         }
         RunLoop.main.add(timer!, forMode: .common)
         refreshPermissions()
-        if !allPermissions || shortcutFailure != nil || CommandLine.arguments.contains("--setup") { showSetup() }
+        if !allPermissions || shortcutFailure != nil || listenerFailure != nil || CommandLine.arguments.contains("--setup") { showSetup() }
+        beginModelSetup()
+    }
+
+    private func beginModelSetup() {
+        guard modelPreparationTask == nil, !isTerminating, !runtimeInitialized else { return }
+        modelPreparationStatus = "Checking local models…"
+        updateStatus(modelPreparationStatus!)
+        modelPreparationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { modelPreparationTask = nil; updateSetupStatus() }
+            do {
+                let paths = try RuntimePaths.application()
+                let store = ModelStore(paths: paths)
+                modelStore = store
+                try await store.prepare { [weak self] progress in
+                    guard let self, !self.isTerminating, !Task.isCancelled else { return }
+                    let percent = Int(progress.fraction * 100)
+                    self.modelPreparationStatus = progress.stage == .downloading
+                        ? "Downloading \(progress.label) · \(percent)%" : progress.label
+                    self.modelProgress?.doubleValue = progress.fraction
+                    self.updateStatus(self.modelPreparationStatus ?? "Preparing local models…")
+                    if progress.stage == .downloading, self.setupWindow == nil { self.showSetup() }
+                }
+                try Task.checkCancellation()
+                guard !isTerminating else { return }
+                transcriber = WhisperTranscriber(resources: paths.resources, models: paths.models)
+                correctionService = LocalCorrectionService(resources: paths.resources, models: paths.models)
+                cleanup = correctionService.makeCleanupClient()
+                runtimeInitialized = true; modelPreparationStatus = nil
+                configureLifecycle()
+                await prepareEngines()
+            } catch is CancellationError {
+                modelPreparationStatus = "Model setup paused · resume when ready"
+                updateStatus(modelPreparationStatus!)
+            } catch {
+                modelPreparationStatus = error.localizedDescription
+                updateStatus(modelPreparationStatus!)
+                if !isTerminating { showSetup() }
+            }
+        }
+    }
+
+    @objc private func toggleModelSetup() {
+        if modelPreparationTask != nil { modelPreparationTask?.cancel() }
+        else { beginModelSetup() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showSetup() }
+        if !flag && (!allPermissions || shortcutFailure != nil || listenerFailure != nil ||
+                     (!runtimeInitialized && modelPreparationTask == nil)) { showSetup() }
         return true
     }
 
@@ -126,7 +218,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let missing = missingPermissions
         if !missing.isEmpty { return "Setup required: " + missing.joined(separator: ", ") }
         if let shortcutFailure { return "Shortcut unavailable · " + shortcutFailure }
-        return monitoring ? (correctionReady ? "Ready · \(startInstruction)" : "Ready · correction unavailable or starting") : "Shortcut listener could not start · check Input Monitoring"
+        if let listenerFailure { return listenerFailure.localizedDescription }
+        return monitoring ? (correctionReady ? "Ready · \(startInstruction)" : "Ready · correction unavailable or starting") : "Shortcut listener is starting…"
     }
 
     private func configureMenu() {
@@ -134,8 +227,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         statusMenu = NSMenuItem(title: status, action: nil, keyEquivalent: "")
         menu.addItem(statusMenu); menu.addItem(.separator())
-        let setup = NSMenuItem(title: "Setup…", action: #selector(showSetup), keyEquivalent: "")
+        let setup = NSMenuItem(title: "Settings…", action: #selector(showSetup), keyEquivalent: "")
         setup.target = self; menu.addItem(setup)
+        let words = NSMenuItem(title: "Custom Words…", action: #selector(showCustomWords), keyEquivalent: "")
+        words.target = self; menu.addItem(words)
         copyMenu = NSMenuItem(title: "Copy last result", action: #selector(copyLast), keyEquivalent: "")
         copyMenu.target = self; copyMenu.isEnabled = false; menu.addItem(copyMenu)
         cancelMenu = NSMenuItem(title: "Cancel dictation", action: #selector(cancelDictation), keyEquivalent: "")
@@ -146,6 +241,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         diagnostics.target = self; menu.addItem(diagnostics)
         retryMenu = NSMenuItem(title: "Retry local engines", action: #selector(retryEngines), keyEquivalent: "")
         retryMenu.target = self; menu.addItem(retryMenu)
+        retryListenerMenu = NSMenuItem(title: "Retry shortcut listener", action: #selector(retryListener), keyEquivalent: "")
+        retryListenerMenu.target = self; menu.addItem(retryListenerMenu)
+        let permissionReport = NSMenuItem(title: "Export permission diagnostics…", action: #selector(exportPermissionDiagnostics), keyEquivalent: "")
+        permissionReport.target = self; menu.addItem(permissionReport)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Local Dictation", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self; menu.addItem(quit)
@@ -164,11 +263,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         discardMenu?.isEnabled = phase == .pending
         cancelMenu?.isEnabled = phase == .listening || phase == .processing
         retryMenu?.isEnabled = phase == .idle && !suspending
+        retryListenerMenu?.isEnabled = !monitoring && phase == .idle && !isTerminating
         updateSetupStatus()
     }
 
     private func prepareEngines() async {
-        guard !suspending else { return }
+        guard !suspending, runtimeInitialized else { return }
         let generation = engineGeneration
         engineReady = false
         if phase == .loading || phase == .idle { updateStatus("Starting local models…") }
@@ -187,7 +287,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func startCorrection() {
-        guard correctionTask == nil, !suspending, !isTerminating else { return }
+        guard runtimeInitialized, correctionTask == nil, !suspending, !isTerminating else { return }
         correctionGeneration &+= 1
         let generation = correctionGeneration
         correctionTask = Task { [weak self] in
@@ -215,21 +315,38 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func retryEngines() {
+        if !runtimeInitialized { beginModelSetup(); return }
         guard phase == .idle else { return }
         if !engineReady { Task { await prepareEngines() } }
         else { startCorrection() }
+    }
+
+    @objc private func retryListener() {
+        guard !isTerminating, phase == .idle || phase == .loading || phase == .pending else { return }
+        hotkey.stop(); monitoring = false
+        resumeShortcut()
+        if phase == .idle { updateStatus(permissionStatus) }
+        else if phase == .pending { showPending() }
     }
 
     private func refreshPermissions() {
         guard !isTerminating, !CommandLine.arguments.contains("--diagnostics") else { return }
         if recordingShortcut { updateSetupStatus(); return }
         inserter.primeFrontmostAccessibility()
-        if monitoring && !hotkey.isActive { hotkey.stop(); monitoring = false }
-        if !FnHotkey.permissionGranted && monitoring {
+        let inputPermission = FnHotkey.permissionGranted
+        if inputPermission != lastInputPermission {
+            listenerAttempts = 0; listenerRetryAfter = 0; listenerFailure = nil
+            lastInputPermission = inputPermission
+        }
+        if monitoring && !hotkey.isActive {
+            hotkey.stop(); monitoring = false; listenerAttempts = 0; listenerRetryAfter = 0
+        }
+        if !inputPermission && monitoring {
             hotkey.stop(); monitoring = false
         }
-        if FnHotkey.permissionGranted && !monitoring && shortcutFailure == nil {
-            monitoring = hotkey.start { [weak self] action in
+        if inputPermission && !monitoring && shortcutFailure == nil,
+           listenerAttempts < 3, ProcessInfo.processInfo.systemUptime >= listenerRetryAfter {
+            let result = hotkey.startResult { [weak self] action in
                 switch action {
                 case .start: self?.startDictation()
                 case .stop: self?.finishDictation()
@@ -237,11 +354,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .resolvePending: self?.showPending("Insert, copy, or discard your previous text")
                 }
             }
-            if !monitoring, let error = hotkey.lastRegistrationError {
-                shortcutFailure = error.localizedDescription
+            switch result {
+            case .success:
+                monitoring = true; listenerFailure = nil; listenerAttempts = 0
+            case .failure(let error):
+                monitoring = false; listenerFailure = error; listenerAttempts += 1
+                listenerRetryAfter = ProcessInfo.processInfo.systemUptime + (listenerAttempts == 1 ? 2 : 5)
+                if case .registration(let registration) = error { shortcutFailure = registration.localizedDescription }
             }
             syncHotkey()
         }
+        permissionDiagnostics.record(.init(microphone: AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
+                                          accessibility: TextInserter.accessibilityGranted(),
+                                          inputMonitoring: inputPermission, listenerActive: monitoring,
+                                          listenerError: listenerFailure?.diagnosticCode))
         if !allPermissions && phase == .listening {
             // Keep the audio already captured. Placement will wait for setup.
             finishDictation()
@@ -249,17 +375,18 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Refresh on readiness changes without erasing errors or copy-recovery
         // messages on every timer tick. Partial grants also change this value.
         if phase == .idle, engineReady {
-            let readiness = missingPermissions.joined(separator: ",") + " listener=\(monitoring)"
+            let readiness = missingPermissions.joined(separator: ",") + " listener=\(monitoring) error=\(listenerFailure?.diagnosticCode ?? "none")"
             if readiness != lastPermissionState {
                 lastPermissionState = readiness
                 updateStatus(permissionStatus)
             }
         }
         updateSetupStatus()
+        if guidedPermissionSetup { advancePermissionSetup() }
     }
 
     private func syncHotkey() {
-        guard !isTerminating else { hotkey.setPhase(.processing); return }
+        guard !isTerminating, !editingVocabulary else { hotkey.setPhase(.processing); return }
         switch phase {
         case .idle: hotkey.setPhase(.idle)
         case .listening: hotkey.setPhase(.listening)
@@ -288,6 +415,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func startDictation() {
         guard !isTerminating else { return }
         if state.pendingText != nil { showPending(); return }
+        guard runtimeInitialized, !editingVocabulary else {
+            updateStatus(modelPreparationStatus ?? "Finish local model setup first")
+            syncHotkey(); return
+        }
         guard phase == .idle, allPermissions, monitoring, !suspending, !copyInProgress else {
             syncHotkey()
             updateStatus(suspending ? "Local models are resting · try again shortly" : permissionStatus)
@@ -296,17 +427,27 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let originalPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let token = state.begin() else { return }
+        sessionVocabulary = vocabulary
         setupWindow?.orderOut(nil)
         metrics.begin(token); dismissTask?.cancel()
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
+        hud.beginSession(token, fallbackScreen: screen)
         hud.show(.starting, on: screen); metrics.mark("indicatorRequested", token)
         do {
             // Audio starts before any field text or editor ancestry is read.
             try recorder.start(); metrics.mark("microphoneReady", token)
             let anchor = originalPID.flatMap { inserter.beginCapture(expectedProcessIdentifier: $0) }
+            let origin = Task { [inserter] in
+                guard let anchor else { return nil as CGRect? }
+                return await inserter.originWindowFrame(for: anchor)
+            }
             targetTask = Task { [inserter] in
                 guard let anchor else { return nil }
                 return try? await inserter.inspect(anchor)
+            }
+            Task { [weak self] in
+                guard let self, let rect = await origin.value, self.session == token else { return }
+                self.hud.pinOrigin(rect, for: token)
             }
             syncHotkey(); hud.show(.listening)
             updateStatus("Listening · \(finishInstruction)")
@@ -339,6 +480,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard phase == .listening else { return }
         listeningTimer?.invalidate(); listeningTimer = nil
         let token = session
+        let vocabularySnapshot = sessionVocabulary
         metrics.mark("stopped", token)
         do {
             let audio = try recorder.stop()
@@ -349,16 +491,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let self, token == session, !Task.isCancelled else { return }
                 var recoverable: String?
                 do {
-                    let raw = try await transcriber.transcribe(audio.samples)
+                    let raw = try await transcriber.transcribe(audio.samples, vocabulary: vocabularySnapshot)
                     guard token == session, !Task.isCancelled else { return }
                     engineReady = true
+                    customWordsController?.updateRecognitionStatus(overflowIDs: transcriber.lastVocabularyOverflowIDs)
                     metrics.mark("transcribed", token)
                     if raw.isEmpty { finishWithoutText("No speech detected", token: token); return }
                     recoverable = raw
                     var result = raw, usedOriginal = false
                     if correctionReady {
                         updateStatus("Correcting locally…"); hud.show(.correcting)
-                        do { result = try await cleanup.clean(raw) }
+                        do { result = try await cleanup.clean(raw, vocabulary: vocabularySnapshot) }
                         catch { usedOriginal = true }
                     } else {
                         usedOriginal = true; startCorrection()
@@ -401,10 +544,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !copyInProgress else { showPending("Finishing clipboard copy…"); return }
         guard allPermissions, monitoring else { showPending("Text saved · finish permission setup to place it"); return }
         guard let token = state.beginPlacement() else { return }
+        hud.beginSession(token, fallbackScreen: NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main)
         setupWindow?.orderOut(nil)
         metrics.begin(token)
         syncHotkey(); updateStatus("Checking destination…"); hud.show(.inserting)
         let anchor = inserter.beginCapture()
+        Task { [weak self, inserter] in
+            guard let self, let anchor, let rect = await inserter.originWindowFrame(for: anchor), self.session == token else { return }
+            self.hud.pinOrigin(rect, for: token)
+        }
         processingTask = Task { [weak self] in
             guard let self else { return }
             guard let anchor, let destination = try? await inserter.inspect(anchor), destination.canInsertAutomatically,
@@ -549,6 +697,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         catch { updateStatus("Could not export measurements: \(error.localizedDescription)") }
     }
 
+    @objc private func exportPermissionDiagnostics() {
+        let panel = NSSavePanel(); panel.nameFieldStringValue = "Local-Dictation-permissions.json"
+        panel.message = "Local launch identities and permission/listener states. Includes the app's installation path; no audio, text, vocabulary, or keystrokes."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try permissionDiagnostics.export().write(to: url, options: .atomic) }
+        catch { updateStatus("Could not export permission diagnostics: \(error.localizedDescription)") }
+    }
+
     private func configureLifecycle() {
         let center = NSWorkspace.shared.notificationCenter
         lifecycleObservers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -614,7 +770,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if answer == .alertThirdButtonReturn { return .terminateCancel }
             if answer == .alertFirstButtonReturn { copyOnQuit = state.pendingText }
         }
-        guard inserter.hasPendingPaste else {
+        let preparingModels = modelPreparationTask
+        guard inserter.hasPendingPaste || preparingModels != nil else {
             if let copyOnQuit, !inserter.copyForRecovery(text: copyOnQuit) {
                 showPending("Copy failed · your text is still waiting")
                 return .terminateCancel
@@ -622,12 +779,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return .terminateNow
         }
         isTerminating = true
+        // Cancellation terminates curl, but its asynchronous drain must finish
+        // before exit releases the model-file lock. Otherwise an immediate
+        // relaunch could resume a partial file still owned by the old child.
+        preparingModels?.cancel()
         processingTask?.cancel(); targetTask?.cancel(); state.cancel(); recorder.cancel()
         // Keep the timer/listener alive until termination is confirmed, so a
         // failed Copy and Quit can return to a fully usable pending session.
         hotkey.setPhase(.processing)
-        updateStatus("Restoring clipboard before quitting…")
+        updateStatus(preparingModels != nil ? "Finishing model setup cleanup before quitting…" : "Restoring clipboard before quitting…")
         Task { @MainActor in
+            await preparingModels?.value
             await inserter.waitForPendingPaste()
             if let copyOnQuit, !inserter.copyForRecovery(text: copyOnQuit) {
                 isTerminating = false; syncHotkey()
@@ -644,8 +806,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         timer?.invalidate(); listeningTimer?.invalidate(); hotkey.stop(); dismissTask?.cancel()
         pressureSource?.cancel()
         for observer in lifecycleObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
-        processingTask?.cancel(); targetTask?.cancel(); correctionTask?.cancel()
-        recorder.cancel(); transcriber.shutdown(); correctionService.stop()
+        processingTask?.cancel(); targetTask?.cancel(); correctionTask?.cancel(); modelPreparationTask?.cancel()
+        recorder.cancel(); transcriber?.shutdown(); correctionService?.stop()
     }
 
     private var usesFn: Bool { shortcutConfiguration == .fn }
@@ -712,6 +874,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .failure(let error): shortcutFailure = error.localizedDescription
         }
         lastPermissionState = nil
+        listenerAttempts = 0; listenerRetryAfter = 0; listenerFailure = nil
         updateShortcutAppearance()
         refreshPermissions()
         if shortcutFailure != nil { updateStatus(permissionStatus) }
@@ -719,7 +882,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showSetup() {
         if let setupWindow { NSApp.activate(ignoringOtherApps: true); setupWindow.makeKeyAndOrderFront(nil); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 650),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 730),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Local Dictation"; window.isReleasedWhenClosed = false; window.center()
         window.delegate = self
@@ -744,12 +907,39 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let shortcutSection = NSStackView(views: [shortcutHeading, shortcutRow])
         shortcutSection.orientation = .vertical; shortcutSection.alignment = .leading; shortcutSection.spacing = 6
         stack.addArrangedSubview(shortcutSection)
-        let permissions = NSStackView(); permissions.orientation = .horizontal; permissions.spacing = 8
+        let wordsButton = NSButton(title: "Custom Words…", target: self, action: #selector(showCustomWords))
+        wordsButton.bezelStyle = .rounded; stack.addArrangedSubview(wordsButton)
+        let permissionTitle = NSTextField(labelWithString: "One-time permissions")
+        permissionTitle.font = .systemFont(ofSize: 13, weight: .semibold); stack.addArrangedSubview(permissionTitle)
+        let permissions = NSStackView(); permissions.orientation = .vertical; permissions.alignment = .leading; permissions.spacing = 5
         for (label, action) in [("Microphone", #selector(allowMicrophone)), ("Accessibility", #selector(allowAccessibility)), ("Input Monitoring", #selector(allowMonitoring))] {
             let button = NSButton(title: label, target: self, action: action); button.bezelStyle = .rounded
-            permissions.addArrangedSubview(button)
+            permissionButtons[label] = button
+            let purpose: String
+            switch label {
+            case "Microphone": purpose = "Hear you while dictating"
+            case "Accessibility": purpose = "Place text into your chosen field"
+            default: purpose = "Detect your shortcut across apps"
+            }
+            let explanation = NSTextField(labelWithString: purpose); explanation.font = .systemFont(ofSize: 12)
+            explanation.textColor = .secondaryLabelColor
+            let row = NSStackView(views: [button, explanation]); row.spacing = 10; row.alignment = .centerY
+            permissions.addArrangedSubview(row)
         }
         stack.addArrangedSubview(permissions)
+        let finishSetup = NSButton(title: "Continue setup", target: self, action: #selector(continuePermissionSetup))
+        finishSetup.bezelStyle = .rounded; continueSetupButton = finishSetup
+        let retryListener = NSButton(title: "Retry listener", target: self, action: #selector(retryListener))
+        retryListener.bezelStyle = .rounded; listenerRetryButton = retryListener
+        let setupActions = NSStackView(views: [finishSetup, retryListener]); setupActions.spacing = 8
+        stack.addArrangedSubview(setupActions)
+        let progress = NSProgressIndicator(); progress.style = .bar; progress.isIndeterminate = false
+        progress.minValue = 0; progress.maxValue = 1; progress.translatesAutoresizingMaskIntoConstraints = false
+        let modelsAction = NSButton(title: "Pause model setup", target: self, action: #selector(toggleModelSetup))
+        modelsAction.bezelStyle = .rounded
+        let modelRow = NSStackView(views: [progress, modelsAction]); modelRow.spacing = 10
+        progress.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        modelProgress = progress; modelActionButton = modelsAction; stack.addArrangedSubview(modelRow)
         let statusLabel = NSTextField(wrappingLabelWithString: "Checking permissions…")
         statusLabel.font = .systemFont(ofSize: 12); statusLabel.textColor = .secondaryLabelColor
         setupStatus = statusLabel; stack.addArrangedSubview(statusLabel)
@@ -770,12 +960,65 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateSetupStatus() {
-        let canChange = phase == .idle && !recordingShortcut && !copyInProgress && !isTerminating
+        let canChange = phase == .idle && !recordingShortcut && !editingVocabulary && !copyInProgress && !isTerminating
         shortcutChangeButton?.isEnabled = canChange
         shortcutResetButton?.isEnabled = canChange && shortcutConfiguration != .fn
         let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let accessibility = TextInserter.accessibilityGranted(), input = FnHotkey.permissionGranted
+        for (name, allowed) in [("Microphone", mic), ("Accessibility", accessibility), ("Input Monitoring", input)] {
+            permissionButtons[name]?.title = allowed ? "✓ \(name)" : "Allow \(name)…"
+            permissionButtons[name]?.isEnabled = !allowed
+        }
+        continueSetupButton?.isHidden = allPermissions
+        continueSetupButton?.isEnabled = !guidedPermissionSetup
+        listenerRetryButton?.isHidden = !allPermissions || monitoring
+        listenerRetryButton?.isEnabled = !monitoring && !isTerminating
+        modelProgress?.isHidden = runtimeInitialized
+        modelActionButton?.isHidden = runtimeInitialized
+        modelActionButton?.title = modelPreparationTask == nil ? "Resume model setup" : "Pause model setup"
         let shortcutProblem = shortcutFailure.map { "\nShortcut: \($0)" } ?? ""
-        setupStatus?.stringValue = "Microphone: \(mic ? "allowed" : "needed")   Accessibility: \(TextInserter.accessibilityGranted() ? "allowed" : "needed")\nInput Monitoring: \(FnHotkey.permissionGranted ? "allowed" : "needed")\nShortcut listener: \(monitoring ? "active" : "not active")\(shortcutProblem)\n\(correctionStatus)\n\(status)"
+        let listener = monitoring ? "Shortcut listener: active" : listenerFailure?.localizedDescription ?? "Shortcut listener: starting"
+        setupStatus?.stringValue = "\(listener)\(shortcutProblem)\n\(modelPreparationStatus ?? correctionStatus)\n\(status)"
+    }
+
+    @objc private func showCustomWords() {
+        guard !isTerminating, phase != .listening, phase != .processing, !recordingShortcut else { return }
+        if customWordsController == nil {
+            customWordsController = CustomWordsController(snapshot: { [weak self] in self?.vocabulary ?? .empty },
+                onSave: { [weak self] entries in
+                    guard let self else { return "The application is closing." }
+                    do {
+                        let updated = try VocabularySnapshot(entries: entries, revision: self.vocabulary.revision &+ 1)
+                        guard VocabularyPreferences.save(updated) else { return "Your words could not be saved. Try again." }
+                        self.vocabulary = updated
+                        return nil
+                    } catch { return error.localizedDescription }
+                }, onEditingChanged: { [weak self] editing in
+                    guard let self else { return }
+                    self.editingVocabulary = editing; self.syncHotkey(); self.updateSetupStatus()
+                })
+        }
+        customWordsController?.show()
+    }
+
+    @objc private func continuePermissionSetup() {
+        guidedPermissionSetup = true; guidedPermissionStep = nil
+        advancePermissionSetup(); updateSetupStatus()
+    }
+
+    private func advancePermissionSetup() {
+        guard guidedPermissionSetup else { return }
+        guard let missing = missingPermissions.first else {
+            guidedPermissionSetup = false; guidedPermissionStep = nil
+            updateSetupStatus(); return
+        }
+        guard guidedPermissionStep != missing else { return }
+        guidedPermissionStep = missing
+        switch missing {
+        case "Microphone": allowMicrophone()
+        case "Accessibility": allowAccessibility()
+        default: allowMonitoring()
+        }
     }
 
     @objc private func allowMicrophone() {

@@ -1,25 +1,33 @@
 import AppKit
 
-/// Uses the existing isolated native fixture; never types into a user app.
+/// Uses an isolated native editor and floating surfaces; never types into a user app.
 @main struct HUDSmoke {
     @MainActor static func main() {
         if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--check-permission" {
-            if CGPreflightPostEventAccess() { exit(0) }
+            if CGPreflightPostEventAccess() && AXIsProcessTrusted() { exit(0) }
             fputs("HUD click regression needs Accessibility permission for its runner. No fixture was opened.\n", stderr)
             exit(2)
+        }
+        if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--check-geometry" {
+            do { try assertDisplaySelection(); print("Passed 7 display geometry checks"); exit(0) }
+            catch { fputs("HUD GEOMETRY FAILED: \(error)\n", stderr); exit(1) }
         }
         guard CommandLine.arguments.count == 3 else { exit(2) }
         NSApplication.shared.setActivationPolicy(.accessory)
         setbuf(stdout, nil)
         Task { @MainActor in
-            do { try await run(); print("Passed 7 capsule HUD, external-editor, and announcement regressions"); exit(0) }
-            catch { fputs("HUD TEST FAILED: \(error)\n", stderr); exit(1) }
+            do { try await run(); print("Passed 13 HUD visibility, Space, display, focus, and announcement regression groups"); exit(0) }
+            catch {
+                fputs("HUD TEST FAILED: \(error)\nActivation trace: \(activationTrace.joined(separator: "; "))\n", stderr)
+                exit(1)
+            }
         }
         NSApplication.shared.run()
     }
 
     @MainActor static var sequence = 0
     @MainActor static var fixturePID: pid_t = 0
+    @MainActor static var activationTrace: [String] = []
     static var directory: URL { URL(fileURLWithPath: CommandLine.arguments[1]) }
     static var token: String { CommandLine.arguments[2] }
 
@@ -50,7 +58,9 @@ import AppKit
 
     @MainActor static func assertEditorRetainedFocus(_ hud: DictationHUD) async throws {
         let reply = try await command([:])
-        try check(NSWorkspace.shared.frontmostApplication?.processIdentifier == fixturePID, "HUD activated its app")
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        try check(frontPID == fixturePID,
+                  "Editor lost foreground: frontPID=\(String(describing: frontPID)), fixturePID=\(fixturePID), hudPID=\(ProcessInfo.processInfo.processIdentifier), fixtureActive=\(String(describing: reply["active"])), fixtureKey=\(String(describing: reply["keyWindow"])), hudKey=\(hud.panel.isKeyWindow)")
         try check(reply["active"] as? Bool == true && reply["keyWindow"] as? Bool == true,
                   "HUD took the editor's key window")
         try check(reply["firstResponderIsField"] as? Bool == true, "HUD changed the editor's first responder")
@@ -96,6 +106,7 @@ import AppKit
         }
         defer { if let monitor { NSEvent.removeMonitor(monitor) } }
         let source = CGEventSource(stateID: .combinedSessionState)
+        activationTrace.append("click \(id) at \(ProcessInfo.processInfo.systemUptime)")
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
                 throw NSError(domain: "Cannot create HUD click", code: 1)
@@ -103,6 +114,7 @@ import AppKit
             event.post(tap: .cghidEventTap)
             try await Task.sleep(nanoseconds: 35_000_000)
         }
+        activationTrace.append("click completed \(id), received=\(didReceive()) at \(ProcessInfo.processInfo.systemUptime)")
         let deadline = ProcessInfo.processInfo.systemUptime + 2
         while !didReceive(), ProcessInfo.processInfo.systemUptime < deadline {
             try await Task.sleep(nanoseconds: 20_000_000)
@@ -129,14 +141,96 @@ import AppKit
         print("HUD preview: \(output.path)")
     }
 
+    @MainActor static func assertTopmost(_ hud: DictationHUD) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        var covering: [Int] = []
+        repeat {
+            let frame = hud.panel.frame
+            covering = [CGFloat(0.25), 0.5, 0.75].map {
+                NSWindow.windowNumber(at: NSPoint(x: frame.minX + frame.width * $0, y: frame.midY),
+                                      belowWindowWithWindowNumber: 0)
+            }
+            if hud.panel.isVisible, hud.panel.isOnActiveSpace,
+               covering.allSatisfy({ $0 == hud.panel.windowNumber }) { return }
+            try await Task.sleep(nanoseconds: 30_000_000)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        throw NSError(domain: "HUD is not topmost: visible=\(hud.panel.isVisible) activeSpace=\(hud.panel.isOnActiveSpace) frame=\(hud.panel.frame) level=\(hud.panel.level.rawValue) panel=\(hud.panel.windowNumber) covering=\(covering)", code: 1)
+    }
+
+    @MainActor static func waitForFullScreen(_ expected: Bool) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 8
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            let reply = try await command([:])
+            if reply["fullScreen"] as? Bool == expected { return }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        throw NSError(domain: "Owned fixture did not finish full-screen transition", code: 1)
+    }
+
+    @MainActor static func waitForDialog() async throws -> Int {
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            let reply = try await command([:])
+            if let window = reply["dialogWindowNumber"] as? Int,
+               reply["keyWindowNumber"] as? Int == window { return window }
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        throw NSError(domain: "Owned fixture dialog did not become key", code: 1)
+    }
+
+    @MainActor static func assertDisplaySelection() throws {
+        let displays = [DictationHUD.ScreenRegion(id: 1, frame: CGRect(x: 0, y: 0, width: 1920, height: 1080)),
+                        .init(id: 2, frame: CGRect(x: -1280, y: 0, width: 1280, height: 1024)),
+                        .init(id: 3, frame: CGRect(x: 0, y: -900, width: 1440, height: 900)),
+                        .init(id: 4, frame: CGRect(x: 1920, y: 0, width: 1512, height: 982))]
+        try check(DictationHUD.displayID(intersecting: CGRect(x: -1000, y: 100, width: 800, height: 700), regions: displays) == 2,
+                  "Window on left display was resolved using primary coordinates")
+        try check(DictationHUD.displayID(intersecting: CGRect(x: 100, y: -800, width: 1000, height: 600), regions: displays) == 3,
+                  "Window above primary display was not resolved")
+        try check(DictationHUD.displayID(intersecting: CGRect(x: 2100, y: 100, width: 1000, height: 700), regions: displays) == 4,
+                  "Logical Retina display coordinates were rescaled")
+        try check(DictationHUD.displayID(intersecting: CGRect(x: -200, y: 100, width: 800, height: 700), regions: displays) == 1,
+                  "Spanning window did not use largest visible intersection")
+        try check(DictationHUD.displayID(intersecting: CGRect(x: 9000, y: 0, width: 100, height: 100), regions: displays) == nil,
+                  "Offscreen geometry should keep fallback")
+        try check(DictationHUD.displayID(intersecting: .zero, regions: displays) == nil, "Empty geometry accepted")
+        try check(DictationHUD.displayID(intersecting: CGRect(x: 0, y: 0, width: CGFloat.infinity, height: 100), regions: displays) == nil,
+                  "Nonfinite geometry accepted")
+    }
+
     @MainActor static func run() async throws {
-        guard CGPreflightPostEventAccess() else { throw NSError(domain: "HUD runner needs Accessibility", code: 1) }
+        guard CGPreflightPostEventAccess(), AXIsProcessTrusted() else { throw NSError(domain: "HUD runner needs Accessibility", code: 1) }
+        let activations = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { notification in
+            let pid = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+            MainActor.assumeIsolated {
+                activationTrace.append("foregroundPID=\(String(describing: pid)) at \(ProcessInfo.processInfo.systemUptime)")
+            }
+        }
+        defer { NSWorkspace.shared.notificationCenter.removeObserver(activations) }
         _ = try await command(["value": "hello world", "location": 5, "focus": true])
         for _ in 0..<20 {
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == fixturePID { break }
             _ = try await command(["focus": true])
             try await Task.sleep(nanoseconds: 100_000_000)
         }
+        try check(NSWorkspace.shared.frontmostApplication?.processIdentifier == fixturePID,
+                  "Fixture is not frontmost; no AX inspection performed")
+        let owned = try await command([:])
+        guard let ownedFrame = owned["windowFrame"] as? [Double], ownedFrame.count == 4,
+              let leaf = AXInspection(budget: 0.2).anchorLeaf(in: fixturePID) else {
+            throw NSError(domain: "Cannot anchor owned fixture window", code: 1)
+        }
+        let originalFrame = CGRect(x: ownedFrame[0], y: ownedFrame[1], width: ownedFrame[2], height: ownedFrame[3])
+        let anchor = TextInserter.Anchor(processIdentifier: fixturePID, focusedLeaf: leaf, cursorElement: leaf,
+                                         selection: nil, selectionMarker: nil, epoch: 0, owner: UUID())
+        let inspector = TargetInspector()
+        try check(await inspector.originWindowFrame(anchor) == originalFrame, "Original AX window geometry differs from owned fixture")
+        let canceledOrigin = Task { await inspector.originWindowFrame(anchor) }
+        canceledOrigin.cancel()
+        try check(await canceledOrigin.value == nil, "Canceled origin request returned geometry")
+        print("PASS origin window geometry is anchored, asynchronous, and cancellation-aware")
         var announcements: [String] = []
         let hud = DictationHUD(announce: { announcements.append($0) })
         defer { hud.hide() }
@@ -147,6 +241,7 @@ import AppKit
             hud.updateLevel(0.2)
             try await Task.sleep(nanoseconds: 35_000_000)
             try await assertEditorRetainedFocus(hud)
+            try await assertTopmost(hud)
             let height = hud.panel.contentView!.bounds.height
             try check(hud.panel.contentView!.layer?.cornerRadius == height / 2,
                       "HUD is not a true capsule in state \(state)")
@@ -166,7 +261,8 @@ import AppKit
         }
         print("PASS all nine HUD states preserve external editor and caret")
         print("PASS each state has capsule geometry and active dictation stays within its compact footprint")
-        try check(hud.panel.collectionBehavior.contains(.canJoinAllSpaces) &&
+        try check(hud.panel.level == .statusBar && hud.panel.collectionBehavior.contains(.canJoinAllApplications) &&
+                  hud.panel.collectionBehavior.contains(.canJoinAllSpaces) &&
                   hud.panel.collectionBehavior.contains(.fullScreenAuxiliary), "HUD lacks Spaces/full-screen support")
         if let sourceScreen {
             try check(sourceScreen.visibleFrame.contains(hud.panel.frame), "HUD is outside its display")
@@ -201,5 +297,70 @@ import AppKit
         try check(announcements.count == beforeMeter, "Audio level updates produced announcements")
         try await assertEditorRetainedFocus(hud)
         print("PASS changed pending guidance is announced; repeated guidance and meter updates remain silent")
+
+        try assertDisplaySelection()
+        print("PASS origin display selection handles negative coordinates, vertical and Retina display layouts")
+        hud.show(.listening)
+        let frame = hud.panel.frame.insetBy(dx: -50, dy: -30)
+        _ = try await command(["overlayFrame": [frame.minX, frame.minY, frame.width, frame.height],
+                               "overlay": true])
+        try await assertTopmost(hud)
+        _ = try await command(["overlayLevel": NSWindow.Level.statusBar.rawValue - 1, "overlay": true])
+        try await assertTopmost(hud)
+        try await assertEditorRetainedFocus(hud)
+        print("PASS capsule stays above browser-like floating surfaces and near-status overlays without activation")
+
+        let retired = UUID()
+        hud.beginSession(retired, fallbackScreen: sourceScreen)
+        hud.show(.listening)
+        hud.hide()
+        hud.refreshVisibility(for: retired)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: NSWorkspace.shared)
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApplication.shared)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        try check(!hud.panel.isVisible && hud.state == nil, "Space refresh revived dismissed feedback")
+        let current = UUID()
+        hud.beginSession(current, fallbackScreen: sourceScreen)
+        hud.show(.listening)
+        hud.panel.orderOut(nil)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: NSWorkspace.shared)
+        try await assertTopmost(hud)
+        hud.panel.orderOut(nil)
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApplication.shared)
+        try await assertTopmost(hud)
+        let currentFrame = hud.panel.frame
+        hud.pinOrigin(CGRect(x: -10000, y: -10000, width: 20000, height: 20000), for: retired)
+        hud.refreshVisibility(for: retired)
+        try check(hud.sessionID == current && hud.state == .listening && hud.panel.frame == currentFrame,
+                  "Previous session's origin/refresh changed current listening HUD")
+        try await assertTopmost(hud)
+        _ = try await command(["overlay": false])
+        print("PASS stale origin/Space completions cannot revive feedback or move a new session")
+
+        _ = try await command(["dialog": true])
+        let dialogNumber = try await waitForDialog()
+        try check(await inspector.originWindowFrame(anchor) == originalFrame, "Original AX geometry rebound to newly focused dialog")
+        hud.show(.listening)
+        hud.refreshVisibility(for: current)
+        try await assertTopmost(hud)
+        let retained = try await command([:])
+        try check(retained["keyWindowNumber"] as? Int == dialogNumber &&
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == fixturePID && !hud.panel.isKeyWindow,
+                  "HUD took focus from an app dialog")
+        _ = try await command(["dialog": false, "focus": true])
+        try await assertEditorRetainedFocus(hud)
+        print("PASS HUD ordering preserves an app dialog's key window")
+
+        _ = try await command(["fullScreen": true])
+        try await waitForFullScreen(true)
+        hud.refreshVisibility(for: current)
+        try await assertTopmost(hud)
+        try await assertEditorRetainedFocus(hud)
+        _ = try await command(["fullScreen": false])
+        try await waitForFullScreen(false)
+        hud.refreshVisibility(for: current)
+        try await assertTopmost(hud)
+        try await assertEditorRetainedFocus(hud)
+        print("PASS native full-screen Space entry/exit keeps capsule visible and editor focused")
     }
 }

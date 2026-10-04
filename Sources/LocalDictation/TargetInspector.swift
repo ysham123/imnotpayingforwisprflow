@@ -73,6 +73,43 @@ final class TargetInspector: @unchecked Sendable {
         }, onCancel: { cancellation.cancel() })
     }
 
+    /// Cosmetic HUD positioning only. Resolve geometry from the original
+    /// anchored element, never a newly focused window, without reading text or
+    /// delaying microphone startup. Queue delay consumes the request budget.
+    func originWindowFrame(_ anchor: TextInserter.Anchor) async -> CGRect? {
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.15
+        let cancellation = AXRequestCancellation()
+        return await withTaskCancellationHandler(operation: {
+            guard !Task.isCancelled else { return nil }
+            return await withCheckedContinuation { continuation in
+                queue.async {
+                    let context = AXInspection(deadline: deadline, timeout: 0.025)
+                    guard !cancellation.isCancelled, context.hasTime(),
+                          let window = context.elementAttribute(kAXWindowAttribute, of: anchor.focusedLeaf)
+                            ?? context.elementAttribute(kAXWindowAttribute, of: anchor.cursorElement),
+                          let positionValue = context.attribute(kAXPositionAttribute, of: window),
+                          let sizeValue = context.attribute(kAXSizeAttribute, of: window),
+                          CFGetTypeID(positionValue) == AXValueGetTypeID(),
+                          CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
+                        continuation.resume(returning: nil); return
+                    }
+                    var point = CGPoint.zero
+                    var size = CGSize.zero
+                    let position = unsafeBitCast(positionValue, to: AXValue.self)
+                    let dimensions = unsafeBitCast(sizeValue, to: AXValue.self)
+                    guard AXValueGetType(position) == .cgPoint, AXValueGetType(dimensions) == .cgSize,
+                          AXValueGetValue(position, .cgPoint, &point), AXValueGetValue(dimensions, .cgSize, &size),
+                          !context.inspectionFailed, context.hasTime(), !cancellation.isCancelled,
+                          size.width > 0, size.height > 0,
+                          [point.x, point.y, size.width, size.height].allSatisfy(\.isFinite) else {
+                        continuation.resume(returning: nil); return
+                    }
+                    continuation.resume(returning: CGRect(origin: point, size: size))
+                }
+            }
+        }, onCancel: { cancellation.cancel() })
+    }
+
     func validate(_ target: TextInserter.Target) async throws {
         let cancellation = AXRequestCancellation()
         try await withTaskCancellationHandler(operation: {

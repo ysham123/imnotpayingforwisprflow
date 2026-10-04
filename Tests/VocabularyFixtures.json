@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "voice": "Samantha",
+  "rate": 175,
+  "cases": [
+    {"id":101,"text":"I am using whisper flow to dictate this sentence.","expected":"I am using Wispr Flow to dictate this sentence.","terms":["Wispr Flow"],"numbers":[],"negations":0},
+    {"id":102,"text":"I will present my research at new rips this December.","expected":"I will present my research at NeurIPS this December.","terms":["NeurIPS"],"numbers":[],"negations":0},
+    {"id":103,"text":"Send the document to Jose tomorrow.","expected":"Send the document to José tomorrow.","terms":["José"],"numbers":[],"negations":0},
+    {"id":104,"text":"Keep user I D unchanged, and do not delete the file.","expected":"Keep userId unchanged, and do not delete the file.","terms":["userId"],"numbers":[],"negations":1},
+    {"id":105,"text":"Send fifteen items to Jose and fifty items to Alex.","expected":"Send fifteen items to José and fifty items to Alex.","terms":["José"],"numbers":[15,50],"negations":0},
+    {"id":106,"text":"Do not use whisper flow. Use open A I instead.","expected":"Do not use Wispr Flow. Use OpenAI instead.","terms":["Wispr Flow","OpenAI"],"numbers":[],"negations":1},
+    {"id":107,"text":"Let the stream whisper, then flow slowly. Please put the report on the table.","expected":"Let the stream whisper, then flow slowly. Please put the report on the table.","terms":[],"numbers":[],"negations":0,"ordinary":true},
+    {"id":108,"rate":145,"text":"Please review the document carefully before sending it. The opening paragraph explains the purpose of our work and the reason we started this project. The next paragraph describes the questions that still need an answer. We should check the wording and punctuation so that every sentence is easy to understand. Keep the original names and do not change the meaning of the text. Read the final paragraph once more and make sure the information is in the right order. After that review is complete, I will use whisper flow to dictate the final sentence.","expected":"","terms":["Wispr Flow"],"numbers":[],"negations":1,"long":true}
+  ]
+}

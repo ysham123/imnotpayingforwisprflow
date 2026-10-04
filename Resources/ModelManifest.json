@@ -1,0 +1,55 @@
+{
+  "formatVersion": 1,
+  "identifier": "whisper-turbo-q8-qwen3-4b-v1",
+  "files": [
+    {
+      "path": "ggml-large-v3-turbo-q8_0.bin",
+      "label": "Speech model",
+      "bytes": 874188075,
+      "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q8_0.bin"
+    },
+    {
+      "path": "ollama/blobs/sha256-e18a783aae5525fd2852fc94c985541a77e791e034abc2d3056474d59de336fc",
+      "label": "Correction metadata",
+      "bytes": 487,
+      "sha256": "e18a783aae5525fd2852fc94c985541a77e791e034abc2d3056474d59de336fc",
+      "url": "https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:e18a783aae5525fd2852fc94c985541a77e791e034abc2d3056474d59de336fc"
+    },
+    {
+      "path": "ollama/blobs/sha256-3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f",
+      "label": "Correction model",
+      "bytes": 2497280480,
+      "sha256": "3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f",
+      "url": "https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f"
+    },
+    {
+      "path": "ollama/blobs/sha256-2d54db2b9bb29ce7db54fea63a891f5859603813c555b1f88b5e0994652897f9",
+      "label": "Correction metadata",
+      "bytes": 1506,
+      "sha256": "2d54db2b9bb29ce7db54fea63a891f5859603813c555b1f88b5e0994652897f9",
+      "url": "https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:2d54db2b9bb29ce7db54fea63a891f5859603813c555b1f88b5e0994652897f9"
+    },
+    {
+      "path": "ollama/blobs/sha256-d18a5cc71b84bc4af394a31116bd3932b42241de70c77d2b76d69a314ec8aa12",
+      "label": "Correction metadata",
+      "bytes": 11338,
+      "sha256": "d18a5cc71b84bc4af394a31116bd3932b42241de70c77d2b76d69a314ec8aa12",
+      "url": "https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:d18a5cc71b84bc4af394a31116bd3932b42241de70c77d2b76d69a314ec8aa12"
+    },
+    {
+      "path": "ollama/blobs/sha256-cff3f395ef3756ab63e58b0ad1b32bb6f802905cae1472e6a12034e4246fbbdb",
+      "label": "Correction metadata",
+      "bytes": 120,
+      "sha256": "cff3f395ef3756ab63e58b0ad1b32bb6f802905cae1472e6a12034e4246fbbdb",
+      "url": "https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:cff3f395ef3756ab63e58b0ad1b32bb6f802905cae1472e6a12034e4246fbbdb"
+    },
+    {
+      "path": "ollama/manifests/registry.ollama.ai/library/qwen3/4b",
+      "label": "Correction manifest",
+      "bytes": 859,
+      "sha256": "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
+      "inlineUTF8": "{\"schemaVersion\":2,\"mediaType\":\"application/vnd.docker.distribution.manifest.v2+json\",\"config\":{\"mediaType\":\"application/vnd.docker.container.image.v1+json\",\"digest\":\"sha256:e18a783aae5525fd2852fc94c985541a77e791e034abc2d3056474d59de336fc\",\"size\":487},\"layers\":[{\"mediaType\":\"application/vnd.ollama.image.model\",\"digest\":\"sha256:3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f\",\"size\":2497280480},{\"mediaType\":\"application/vnd.ollama.image.template\",\"digest\":\"sha256:2d54db2b9bb29ce7db54fea63a891f5859603813c555b1f88b5e0994652897f9\",\"size\":1506},{\"mediaType\":\"application/vnd.ollama.image.license\",\"digest\":\"sha256:d18a5cc71b84bc4af394a31116bd3932b42241de70c77d2b76d69a314ec8aa12\",\"size\":11338},{\"mediaType\":\"application/vnd.ollama.image.params\",\"digest\":\"sha256:cff3f395ef3756ab63e58b0ad1b32bb6f802905cae1472e6a12034e4246fbbdb\",\"size\":120}]}"
+    }
+  ]
+}

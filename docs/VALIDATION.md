@@ -1,6 +1,6 @@
 # Release validation
 
-This records v1.2 validation and preserves the historical v1.1.1/v1.1.0 evidence. It is not a promise of compatibility with every macOS text editor.
+This records the v1.3 release validation and preserves historical v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
 
 ## Environment
 
@@ -8,6 +8,69 @@ This records v1.2 validation and preserves the historical v1.1.1/v1.1.0 evidence
 - Swift 5.10 and Command Line Tools.
 - whisper.cpp 1.8.3 with Metal, Whisper large-v3-turbo Q8_0.
 - Ollama 0.9.6 and Qwen3 4B Q4_K_M.
+
+## v1.3 validation
+
+Status: the installed v1.3.0 build6 passed native installation, three unchanged relaunches, automated regression checks, and creator-reported Chrome normal/full-screen dictation. The creator then requested publication. This section distinguishes those results from the remaining validation limits below; it does not claim universal editor or recipient-Mac compatibility.
+
+### Permissions and signing
+
+The unchanged installed v1.2.0 build5 was gracefully terminated and reopened three times, without rebuilding, replacing, or re-signing. Its executable SHA256 remained `37edda3dbcea9fff5bb5ecac1d4153427c4455d8451b78f7950d5b634ff02d6e`, and its designated requirement remained cdhash `aa1563d1f14b6a47b4a629f5e8503ab005a142e0`. Targeted macOS TCC logs reported matching allowed grants for Microphone, Accessibility, and ListenEvent through all three cycles, with no matching-identity failures. The creator then confirmed dictation in Chrome worked without changing permissions. The reported unchanged-relaunch failure was not reproduced in this check.
+
+After the native DMG update, the creator approved the changed build and confirmed v1.3 said Ready. The exact installed v1.3.0 build6 was then gracefully quit and reopened three times. Each launch retained authorized Microphone, Accessibility, and Input Monitoring status with an active shortcut listener. Its executable SHA256 remained `cd990830c2af894e0fe594090ff4d835199009de27b537109b4ab63519c1205a`, and its designated requirement remained cdhash `8fb02ca406eea68f6e55897f09a75fa7ddaca34e`. These three unchanged v1.3 relaunches passed without permission resets, rebuilding, or re-signing. After the final cycle, the creator confirmed physical Fn dictation, text insertion, listening-pill visibility, and completion dismissal in Chrome in both normal and full-screen mode, without changing permissions. This is a user-reported live result, separate from the independently observed readiness metadata.
+
+Earlier targeted logs separately showed grants referencing an older code hash. That is update-identity evidence, not proof that every restart failure has the same cause. v1.3 distinguishes permission denial, shortcut conflict, event-tap creation/enable failure, and run-loop source failure, and offers listener retry without asking users to remove valid grants.
+
+A code-signing publisher experiment used one self-signed certificate in an isolated, locked private keychain outside Git. It did not alter certificate trust, default/search-list keychains, or TCC. macOS reported `CSSMERR_TP_NOT_TRUSTED` and zero valid code-signing identities; signing two changed tiny fixtures failed. Cross-build designated-requirement compatibility and recipient permission continuity were therefore **not verified**. The experiment identity is not used for distribution. Ad-hoc updates can still require permission renewal, and clean-recipient Gatekeeper/TCC behavior remains a separate manual check.
+
+### Installer and models
+
+Twenty-six native fixture groups passed: twelve model-store groups, nine injected installation-transaction groups, four atomic-publication groups, and one real ad-hoc installation group. They cover manifest safety, tiny-file migration, verified reuse, partial-download/cancellation recovery, corrupt assets, links, replacement, rollback, and running-copy rejection. Updates exchange the complete staged and installed bundles in one macOS `RENAME_SWAP` operation; fresh installs use `RENAME_EXCL` to reject a concurrently created destination. Real swap/rollback checks preserve the original inode, while injected publication and rollback failures verify preservation of the old app or its recovery path. Canonical-location selection and duplicate-copy selection in the native launcher remain separate installed-app checks. Eight thin-release and eleven existing packaging groups passed. Three additional real release-signature groups verified an inline code-hash requirement, wrong-code-hash rejection, and sealed-resource rejection. An actual inline-requirement parsing failure was caught during DMG creation and corrected in both installation and release verification. Mocked copy/signing tools in fault fixtures establish error handling, not actual macOS trust policy.
+
+Production ModelStore migrated all seven model files totaling **3,371,482,865 bytes** from the installed v1.2 bundle into Application Support and verified each pinned SHA256. Source checks took 2.239 s, verified clone migration 4.338 s, and subsequent offline preparation 2.350 s on the reference machine. Those are one-run setup measurements, not latency distributions. The old installed app's executable stayed unchanged.
+
+The production HTTPS downloader first fetched four pinned metadata blobs totaling 13,451 bytes. A seeded 64-byte partial resumed successfully; all final hashes matched and later offline reuse passed. A subsequent full fresh setup used an isolated empty cache and downloaded all seven files totaling 3,371,482,865 bytes. Its first large transfer was canceled after 4,739,072 bytes; preparation drained about 51 ms later, with zero owned downloaders, and resumption retained that partial. Complete preparation took 123.241 s, independent seven-file SHA validation 2.061 s, and offline reuse 2.008 s with a downloader that fails if invoked. Total workflow time was 127.311 s. These are single-run setup measurements on this network, not expected download times for every user or a clean-recipient Gatekeeper test. The production model folder and installed app were untouched. See [numeric setup evidence](benchmarks/v1.3/model-setup.json).
+
+The final candidate DMG is 12,692,698 bytes (about 12.7 MB), with SHA256 `9abd660ecb839529debea48d88a27dae3c7f009d69902bce56a82230a2db58fb`. `hdiutil verify` passed. Its mounted app passed strict deep verification against the exact final designated requirement, cdhash `8fb02ca406eea68f6e55897f09a75fa7ddaca34e`. The executable, speech worker, Ollama helper, Info.plist, and model manifest matched the packaged candidate byte for byte. No Models folder is bundled, and DMG creation preserves the source signature.
+
+The mounted final DMG was opened after the old installed service quit gracefully. Its native Update dialog selected `/Applications/Local Dictation.app`; Install & Open completed, the source process exited, and the exact installed v1.3.0 build6 opened Settings. Strict signature, exact designated requirement, all five file hashes, and the thin layout passed again after installation. Existing verified external models were reused. This is an actual native installation on the reference Mac, using a locally produced, unquarantined DMG; it does not establish the Gatekeeper experience of an Internet download on a recipient Mac.
+
+The changed-build launch required renewed Microphone, Accessibility, and Input Monitoring approvals. Targeted TCC logs explicitly matched the old v1.2 requirement against the new code and reported the mismatch. That confirms an update-identity renewal on this machine; the creator completed all three current-build approvals, and the three unchanged v1.3 relaunches described above then retained them. No grants or trust settings were reset during installation.
+
+### Indicator
+
+Thirteen real native HUD fixture groups passed, including all nine status states, external-editor/caret preservation, real Cancel/Copy/Discard clicks, browser-like floating surfaces, near-status overlays, dialogs, original-window display anchoring, Retina/negative/vertical display geometry, stale session/Space rejection, and native full-screen Space entry/exit. The panel uses a fixed status-bar level and can join all applications while remaining nonactivating.
+
+The creator subsequently confirmed the exact installed v1.3 build showed and dismissed the pill correctly while dictating in Chrome, both normally and full-screen. The owned AppKit surfaces independently exercise layering and editor focus. These checks do not establish live Safari, Stage Manager, physical multiple-display, VoiceOver, or Dock-reveal behavior.
+
+Latest-source insertion suites then passed sequentially: Native 15/15, WebKit 16/16, and Electron 44.5.1 16/16. They checked target/caret changes, protected fields, pinned asynchronous capture, exactly-once delivery, delayed Accessibility updates, 1.6-second delayed clipboard consumption, queued/canceled delivery, clipboard ownership, and restoration. Each suite exited successfully, restored its saved clipboard, and closed all owned fixtures. No source or permission changes were needed. These owned fixture results do not replace live tests in the named user apps.
+
+### Vocabulary
+
+The headless suites passed 40 normalization/persistence/adversarial checks, 8 client protocol/external-path/recovery checks, and 10 native worker framing/token-budget/silence/no-sticky-hint checks. Native decoder stubs establish protocol and budget behavior, not recognition accuracy. Existing 32 cleanup, 6 cancellation, 5 worker-fault, 9 metadata-cache, 4 correction-lifecycle, 30 gesture, 123 shortcut, 30 session, 8 audio, and 2 target-inspector groups passed. Nineteen additional listener-fault/recovery and bounded-private-diagnostics checks passed.
+
+The final direct Qwen check with saved vocabulary matched all nine expected sentences literally and all eight target-bearing cases with exact preferred spelling, including accented names, identifiers, numbers, negation, repetition, weekday correction, and instruction-like dictated content. The empty snapshot matched the ordinary-speech control (1/9 sentences, 0/8 preferred-term cases). All eighteen outputs passed the conservative validator. The [final spelling diagnostics](benchmarks/v1.3/vocabulary-spelling-diagnostics.json) separate literal sentence equality, normalized sentence equality, and case-sensitive preferred-term spelling. The [earlier direct report](benchmarks/v1.3/vocabulary-direct-quality.json) measures normalized sentence equality; its timing overlapped setup work and is excluded from performance claims.
+
+Seven short synthetic speech clips covered saved phrases, NeurIPS, José, userId, two quantities, negation, and an ordinary-speech control. A 32.462-second clip placed its saved term across a Whisper decoding-window boundary. Both vocabulary modes used the same audio and model settings; their order alternated on each repeat. All 96 speech requests produced accepted cleanup, preserved the checked quantities/negations, and needed no raw fallback. Exact preferred spelling appeared in 32/35 short target-bearing requests with saved vocabulary, versus 0/35 with it disabled. Most of those requests repeated the short timing clip, so this count is not a broad recognition-accuracy estimate.
+
+Saved words were still missed in two fixtures. A combined short sentence preserved OpenAI but missed Wispr Flow despite a matching cleanup hint. The long clip missed Wispr Flow in all ten measured repetitions; its recognized variant did not match a saved alias, so no spelling edit was authorized. A focused rerun confirmed both misses while normalized surrounding text, quantities, negation, and validated order remained intact. The ordinary-speech control stayed unchanged, and real-worker silence and overflow checks passed. These findings establish useful short-clip behavior and remaining spelling limits, not guaranteed saved-word recognition or universal correctness.
+
+### v1.3 warm processing measurements
+
+The reference machine ran twenty repetitions of the 2.670-second short clip and ten of the 32.462-second long clip per vocabulary mode, after unmeasured priming. No other dictation, model, GUI, or compilation work ran during timing. The five-entry test dictionary and voice/rates are defined in the synthetic fixtures; actual audio duration is recorded in each numeric row. The long clip was generated at 145 words per minute to cross thirty seconds, and fixture-generation fingerprints prevent silently reusing audio from a different voice/rate/text setting.
+
+| Audio | Runs per mode | Vocabulary off median / p95 | Vocabulary on median / p95 |
+|---|---:|---:|---:|
+| Short, 2.670 s | 20 | 1.31 / 1.33 s | 1.39 / 1.46 s |
+| Long, 32.462 s | 10 | 4.98 / 6.06 s | 5.37 / 5.68 s |
+
+These times include recognition and cleanup, excluding microphone startup, model warming, installation, and editor delivery. p95 uses nearest rank; with ten long runs it is the maximum. All outliers are retained. Saved vocabulary added about 0.08 s to the short median in this sample. The short speech stage was nearly unchanged (0.723 s without hints, 0.725 s with them); most extra time was cleanup. The long medians were 1.829/2.204 s for speech and 3.156/3.169 s for cleanup, without/with vocabulary. These fixtures differ from the historical v1.2 timing sample and do not establish a version-to-version speedup. Cold, post-sleep, and memory-pressure behavior with vocabulary remain unmeasured.
+
+See [all paired numeric measurements and per-case summaries](benchmarks/v1.3/vocabulary-paired-models.json). Reports contain numeric flags and timings, not audio or transcript contents. Per-term spelling diagnostics were collected in a subsequent quality run; they do not replace the completed warm timing samples.
+
+### Remaining validation limits
+
+The creator confirmed the installed Chrome workflow and requested publication after three unchanged v1.3 relaunches. Live Safari, Stage Manager, physical multiple displays, VoiceOver, Dock reveal, reboot, recipient-Mac Gatekeeper/TCC behavior, and a quarantined Internet-downloaded DMG remain unverified. Vocabulary serialization and reload pass their native tests; Add/Edit/Remove and vocabulary persistence through an installed-app restart still need a manual check. Actual normal app Quit during an active production download is not established by the downloader cancellation/drain integration test. Cold, idle, post-cancellation, post-sleep, and memory-pressure performance with vocabulary have not been measured. No blanket permission-continuity, compatibility, saved-spelling accuracy, or physical-feedback latency claim is made for those cases.
 
 ## v1.2 candidate validation
 

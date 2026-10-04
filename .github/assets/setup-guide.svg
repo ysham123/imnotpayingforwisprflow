@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="230" viewBox="0 0 1040 230" role="img" aria-labelledby="title desc">
+  <title id="title">Local Dictation setup</title>
+  <desc id="desc">Open the download, choose Install and Open, approve three permissions, and dictate locally.</desc>
+  <rect width="1040" height="230" rx="24" fill="#161f1b"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <g fill="#52c98c" font-size="13" font-weight="700"><text x="36" y="46">01</text><text x="290" y="46">02</text><text x="544" y="46">03</text><text x="798" y="46">04</text></g>
+    <g fill="#f0f5f2" font-size="21" font-weight="650"><text x="36" y="84">Open the DMG</text><text x="290" y="84">Install &amp; Open</text><text x="544" y="84">Allow access</text><text x="798" y="84">Speak naturally</text></g>
+    <g fill="#aebeb4" font-size="14">
+      <text x="36" y="117">Open Local Dictation.app</text><text x="36" y="140">from the disk image.</text>
+      <text x="290" y="117">The app installs itself.</text><text x="290" y="140">Models download once.</text>
+      <text x="544" y="117">Microphone, Accessibility,</text><text x="544" y="140">and Input Monitoring.</text>
+      <text x="798" y="117">Double-tap Fn to start.</text><text x="798" y="140">Tap again to finish.</text>
+    </g>
+    <g stroke="#32493b"><path d="M262 38v111M516 38v111M770 38v111"/></g>
+    <text x="36" y="197" fill="#81958a" font-size="12">macOS may require Privacy &amp; Security → Open Anyway on first launch. A custom shortcut is optional.</text>
+  </g>
+</svg>

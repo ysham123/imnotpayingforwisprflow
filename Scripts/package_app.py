@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
+import re
 import shutil
 import signal
 import stat
@@ -84,8 +86,12 @@ def validate_executable(path):
 
 
 def validate_source_resources(source):
-    for path in [source / 'Resources/Info.plist', source / 'LICENSE', source / 'THIRD_PARTY_NOTICES.txt']:
+    for path in [source / 'Resources/Info.plist', source / 'Resources/ModelManifest.json', source / 'LICENSE', source / 'THIRD_PARTY_NOTICES.txt']:
         read_bytes_checked(path)
+    validate_model_manifest(source / 'Resources/ModelManifest.json')
+    for path in (source / 'Resources').rglob('*'):
+        if path.is_symlink(): raise RuntimeError(f'Unexpected source resource symlink: {path}')
+        if path.is_file(): read_bytes_checked(path)
     licenses = source / 'Licenses'
     if not licenses.is_dir() or not any(licenses.iterdir()):
         raise RuntimeError('Source license resources are missing')
@@ -96,8 +102,33 @@ def validate_source_resources(source):
             read_bytes_checked(path)
 
 
-def validate_runtime(runtime, *, verify_digests=True):
+def validate_model_manifest(path):
+    manifest = json.loads(read_text_checked(path))
+    if manifest.get('formatVersion') != 1 or not manifest.get('files'):
+        raise RuntimeError('Invalid model manifest')
+    seen = set()
+    for entry in manifest['files']:
+        name = entry['path']
+        if (not isinstance(name, str) or name in seen
+                or not all(re.fullmatch(r'[A-Za-z0-9_.-]+', item) and item not in ['.', '..'] for item in name.split('/'))
+                or type(entry['bytes']) is not int or entry['bytes'] <= 0
+                or not re.fullmatch(r'[0-9a-f]{64}', entry['sha256'])
+                or ('url' in entry) == ('inlineUTF8' in entry)):
+            raise RuntimeError('Unsafe or incomplete model manifest entry')
+        if 'url' in entry and not entry['url'].startswith('https://'):
+            raise RuntimeError('Model downloads require HTTPS')
+        if 'inlineUTF8' in entry:
+            data = entry['inlineUTF8'].encode('utf-8')
+            if len(data) != entry['bytes'] or hashlib.sha256(data).hexdigest() != entry['sha256']:
+                raise RuntimeError('Inline model metadata failed verification')
+        seen.add(name)
+    return manifest
+
+
+def validate_runtime(runtime, *, verify_digests=True, require_models=True):
     validate_executable(runtime / 'ollama')
+    if not require_models:
+        return
     speech = runtime / 'Models/ggml-large-v3-turbo-q8_0.bin'
     if not speech.is_file() or speech.stat().st_size < 100_000_000:
         raise RuntimeError('Bundled Whisper model is missing or incomplete')
@@ -113,6 +144,21 @@ def validate_runtime(runtime, *, verify_digests=True):
             raise RuntimeError('A correction model blob is incomplete')
         if verify_digests and hash_file_checked(blob) != value:
             raise RuntimeError('A correction model blob failed integrity verification')
+
+
+def signing_options(identity, identifier, requirement=None):
+    options = ['--force', '--timestamp=none', '--sign', identity, '--identifier', identifier]
+    if requirement:
+        if identity == '-': raise RuntimeError('A certificate-pinned requirement cannot use ad-hoc signing')
+        # Exact certificate plus identifier, never an impersonable name or ID alone.
+        expression = requirement.removeprefix('designated =>').strip()
+        match = re.fullmatch(r'identifier "([A-Za-z0-9.-]+)" and certificate leaf = H"([0-9a-fA-F]{40})"', expression)
+        if not match: raise RuntimeError('Use an exact certificate-leaf hash and identifier signing requirement')
+        expression = expression.replace('identifier "' + match[1] + '"', 'identifier "' + identifier + '"')
+        options += ['--requirements', '=designated => ' + expression]
+    elif identity != '-':
+        raise RuntimeError('Set CODE_SIGN_REQUIREMENT to the exact publisher certificate requirement when using CODE_SIGN_IDENTITY')
+    return options
 
 
 def copy_bytes(source, target, *, verify_readback=True):
@@ -157,6 +203,8 @@ def main():
     parser.add_argument('executable', type=Path)
     parser.add_argument('worker', type=Path)
     parser.add_argument('--runtime', type=Path)
+    parser.add_argument('--include-models', action='store_true', help='Optional full offline bundle; default app downloads external models')
+    parser.add_argument('--development', action='store_true', help='Use an isolated development bundle identifier')
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     destination = args.destination.absolute()
@@ -167,15 +215,26 @@ def main():
     validate_executable(args.executable)
     validate_executable(args.worker)
     identity = os.environ.get('CODE_SIGN_IDENTITY', '-')
+    requirement = os.environ.get('CODE_SIGN_REQUIREMENT')
+    info = plistlib.loads(read_bytes_checked(source / 'Resources/Info.plist'))
+    if args.development:
+        info['CFBundleIdentifier'] += '.development'
+    identifier = info['CFBundleIdentifier']
+    signing_options(identity, identifier, requirement)  # validate before any copy
+    existing_plist = destination / 'Contents/Info.plist'
+    if existing_plist.exists():
+        existing_identifier = plistlib.loads(read_bytes_checked(existing_plist)).get('CFBundleIdentifier')
+        if existing_identifier != identifier:
+            raise RuntimeError('Use a separate app location for a different bundle identifier; refusing to replace another app')
     if destination.exists() and identity == '-':
-        info = subprocess.run(['codesign', '-dv', '--verbose=4', str(destination)], capture_output=True, text=True)
-        if 'Authority=' in info.stderr:
+        existing_signature = subprocess.run(['codesign', '-dv', '--verbose=4', str(destination)], capture_output=True, text=True)
+        if 'Authority=' in existing_signature.stderr:
             raise RuntimeError('Set CODE_SIGN_IDENTITY to the existing persistent signing identity; refusing an ad-hoc downgrade')
     expected_process = str(destination / 'Contents/MacOS/LocalDictation')
     running = subprocess.check_output(['ps', '-axo', 'comm='], text=True).splitlines()
     if expected_process in [line.strip() for line in running]:
         raise RuntimeError('Quit Local Dictation before replacing the installed app')
-    validate_runtime(runtime)
+    validate_runtime(runtime, require_models=args.include_models)
     destination.parent.mkdir(parents=True, exist_ok=True)
     stage_root = Path(tempfile.mkdtemp(prefix='.localdictation-install-', dir=destination.parent))
     stage, backup = stage_root / destination.name, stage_root / 'previous.app'
@@ -185,16 +244,21 @@ def main():
         contents = stage / 'Contents'
         copy_bytes(args.executable, contents / 'MacOS/LocalDictation')
         copy_bytes(args.worker, contents / 'Resources/whisper-worker')
-        copy_bytes(source / 'Resources/Info.plist', contents / 'Info.plist')
-        for name in ['Models', 'ollama', 'Licenses']:
+        write_bytes_checked(contents / 'Info.plist', plistlib.dumps(info))
+        for resource in (source / 'Resources').iterdir():
+            if resource.name != 'Info.plist': copy_bytes(resource, contents / 'Resources' / resource.name)
+        names = ['ollama', 'Licenses'] + (['Models'] if args.include_models else [])
+        for name in names:
             copy_bytes(runtime / name, contents / 'Resources' / name)
         copy_bytes(source / 'Licenses', contents / 'Resources/Licenses')
         copy_bytes(source / 'LICENSE', contents / 'Resources/Licenses/LocalDictation-MIT.txt')
         copy_bytes(source / 'THIRD_PARTY_NOTICES.txt', contents / 'Resources/THIRD_PARTY_NOTICES.txt')
-        validate_runtime(contents / 'Resources', verify_digests=False)
+        validate_runtime(contents / 'Resources', verify_digests=False, require_models=args.include_models)
+        validate_model_manifest(contents / 'Resources/ModelManifest.json')
         clean_finder_metadata(stage)
-        for path in [contents / 'Resources/whisper-worker', contents / 'Resources/ollama', stage]:
-            run('codesign', '--force', '--timestamp=none', '--sign', identity, str(path))
+        for path, code_id in [(contents / 'Resources/whisper-worker', identifier + '.whisper-worker'),
+                              (contents / 'Resources/ollama', identifier + '.ollama'), (stage, identifier)]:
+            run('codesign', *signing_options(identity, code_id, requirement), str(path))
         run('codesign', '--verify', '--deep', '--strict', str(stage))
         running = subprocess.check_output(['ps', '-axo', 'comm='], text=True).splitlines()
         if expected_process in [line.strip() for line in running]:

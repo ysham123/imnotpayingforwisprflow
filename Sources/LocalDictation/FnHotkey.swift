@@ -17,10 +17,62 @@ enum ShortcutRegistrationError: LocalizedError, Equatable {
     }
 }
 
+enum HotkeyStartError: LocalizedError, Equatable {
+    case permissionDenied
+    case registration(ShortcutRegistrationError)
+    case eventTapUnavailable
+    case runLoopSourceUnavailable
+    case eventTapDisabled
+
+    var diagnosticCode: String {
+        switch self {
+        case .permissionDenied: return "input_permission_denied"
+        case .registration(.invalid): return "shortcut_invalid"
+        case .registration(.inUse): return "shortcut_conflict"
+        case .registration(.unavailable(let code)): return "shortcut_registration_\(code)"
+        case .eventTapUnavailable: return "event_tap_unavailable"
+        case .runLoopSourceUnavailable: return "run_loop_source_unavailable"
+        case .eventTapDisabled: return "event_tap_disabled"
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .permissionDenied: return "Allow Input Monitoring in System Settings."
+        case .registration(let error): return error.localizedDescription
+        case .eventTapUnavailable: return "Permissions are allowed, but macOS could not create the shortcut listener. Retry listener."
+        case .runLoopSourceUnavailable: return "The shortcut listener could not connect to the app. Retry listener."
+        case .eventTapDisabled: return "macOS did not enable the shortcut listener. Retry listener."
+        }
+    }
+}
+
 /// Fn is observed passively. Custom shortcuts use exclusive Carbon registration
 /// to consume only the assigned chord and report registration conflicts.
 @MainActor
 final class FnHotkey {
+    /// Small platform boundary for fault fixtures. Normal launches always use
+    /// the real permission check and a passive session event tap.
+    struct ListenerEnvironment {
+        var permission: () -> Bool
+        var createTap: (CGEventMask, UnsafeMutableRawPointer) -> CFMachPort?
+        var createSource: (CFMachPort) -> CFRunLoopSource?
+        var enable: (CFMachPort, Bool) -> Void
+        var enabled: (CFMachPort) -> Bool
+
+        @MainActor static var live: Self {
+            Self(permission: { CGPreflightListenEventAccess() }, createTap: { mask, context in
+                CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                  options: .listenOnly, eventsOfInterest: mask,
+                                  callback: FnHotkey.eventCallback, userInfo: context)
+            }, createSource: { CFMachPortCreateRunLoopSource(kCFAllocatorDefault, $0, 0) },
+                 enable: { CGEvent.tapEnable(tap: $0, enable: $1) },
+                 enabled: { CGEvent.tapIsEnabled(tap: $0) })
+        }
+    }
+    private let environment: ListenerEnvironment
+    init(environment: ListenerEnvironment? = nil) { self.environment = environment ?? .live }
+
     private var gesture = FnKeyEventMapper(doubleTapInterval: NSEvent.doubleClickInterval)
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -40,6 +92,7 @@ final class FnHotkey {
     private static let signature: OSType = 0x4C444354 // LDCT
     private(set) var configuration: ShortcutConfiguration = .fn
     private(set) var lastRegistrationError: ShortcutRegistrationError?
+    private(set) var lastStartError: HotkeyStartError?
     /// Physical input only; synthetic paste events must not change target epochs.
     var onInputActivity: (() -> Void)?
 
@@ -50,7 +103,7 @@ final class FnHotkey {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         }
         if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
+            environment.enable(eventTap, false)
             CFMachPortInvalidate(eventTap)
         }
         if let carbonHotkey { UnregisterEventHotKey(carbonHotkey) }
@@ -64,7 +117,7 @@ final class FnHotkey {
     var isActive: Bool {
         guard let eventTap, CFMachPortIsValid(eventTap) else { return false }
         if case .custom = configuration, carbonHotkey == nil { return false }
-        return CGEvent.tapIsEnabled(tap: eventTap)
+        return environment.enabled(eventTap)
     }
 
     /// Register before removing the old binding, so a conflict leaves a working
@@ -131,15 +184,25 @@ final class FnHotkey {
         CGRequestListenEventAccess()
     }
 
-    /// Returns false if macOS denies monitoring or cannot create an event tap.
+    /// Compatibility wrapper for fixtures; callers can inspect the precise error.
     @discardableResult
     func start(onAction: @escaping (HotkeyGesture.Action) -> Void) -> Bool {
+        if case .success = startResult(onAction: onAction) { return true }
+        return false
+    }
+
+    func startResult(onAction: @escaping (HotkeyGesture.Action) -> Void) -> Result<Void, HotkeyStartError> {
         stopMonitoring()
-        guard Self.permissionGranted else {
+        func failure(_ error: HotkeyStartError) -> Result<Void, HotkeyStartError> {
+            self.onAction = nil
             unregisterCarbonHotkey(); removeCarbonHandler()
-            return false
+            lastStartError = error
+            return .failure(error)
         }
-        if case .failure = configure(configuration) { return false }
+        guard environment.permission() else {
+            return failure(.permissionDenied)
+        }
+        if case .failure(let error) = configure(configuration) { return failure(.registration(error)) }
         suppressCurrentlyHeldShortcut()
         self.onAction = onAction
 
@@ -150,35 +213,29 @@ final class FnHotkey {
             | (CGEventMask(1) << CGEventType.rightMouseDown.rawValue)
             | (CGEventMask(1) << CGEventType.otherMouseDown.rawValue)
             | (CGEventMask(1) << CGEventType.scrollWheel.rawValue)
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: mask,
-            callback: Self.eventCallback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            self.onAction = nil
-            unregisterCarbonHotkey(); removeCarbonHandler()
-            return false
+        guard let tap = environment.createTap(mask, Unmanaged.passUnretained(self).toOpaque()) else {
+            return failure(.eventTapUnavailable)
         }
-        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+        guard let source = environment.createSource(tap) else {
             CFMachPortInvalidate(tap)
-            self.onAction = nil
-            unregisterCarbonHotkey(); removeCarbonHandler()
-            return false
+            return failure(.runLoopSourceUnavailable)
         }
 
         eventTap = tap
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        environment.enable(tap, true)
+        guard environment.enabled(tap) else {
+            stopMonitoring()
+            return failure(.eventTapDisabled)
+        }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.invalidateGesture() }
         }
-        return true
+        lastStartError = nil
+        return .success(())
     }
 
     func stop() {
@@ -197,7 +254,7 @@ final class FnHotkey {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         }
         if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
+            environment.enable(eventTap, false)
             CFMachPortInvalidate(eventTap)
         }
         runLoopSource = nil

@@ -15,33 +15,31 @@ swift build -c release
 
 This compiles the application executable. A runnable `.app` also needs the native Whisper worker, the bundled Ollama executable, models, notices, and `Info.plist`. Use an app bundle for normal use so macOS associates privacy grants with its bundle identity.
 
-## Package a complete app
+## Package a thin app and DMG
 
-Prerequisites: Apple Silicon, macOS 14+, Command Line Tools, Python 3, CMake, and a downloaded release installed using the [README](../README.md#get-started).
+Prerequisites: Apple Silicon, macOS14+, Command Line Tools, Python3, CMake, and an existing release runtime. Keep the checkout/build output in a local folder outside iCloud or other File Provider synchronization.
 
-Keep the output app in a local folder outside iCloud/other file synchronization. Synced destinations may inject Finder metadata that prevents code-signature verification. If your checkout is synced, set `LOCAL_DICTATION_BUILD_DIR` to a local directory and use an app destination there.
-
-The build script downloads and checks the pinned whisper.cpp 1.8.3 source archive, builds its static libraries with Metal, compiles `Native/whisper-worker.cpp`, and packages the app. It takes the existing runtime and models from `LOCAL_DICTATION_RUNTIME`; it does not fetch model weights.
-
-From the repository root:
+The build script checks the pinned whisper.cpp1.8.3 archive, builds Metal-enabled static libraries, compiles the private protocol-2 worker, and packages the app. The bundled Ollama executable and licenses are copied from `LOCAL_DICTATION_RUNTIME`. Weights are omitted by default. On first installed launch, `ModelStore` verifies and obtains the assets described in the signed `Resources/ModelManifest.json`.
 
 ```bash
-export LOCAL_DICTATION_RUNTIME="$HOME/Applications/Local Dictation.app/Contents/Resources"
-bash Scripts/build.sh "$PWD/.build-native/Local Dictation.app"
-open "$PWD/.build-native/Local Dictation.app"
+LOCAL_DICTATION_BUILD_DIR="$HOME/Library/Caches/LocalDictation-build" \
+LOCAL_DICTATION_RUNTIME="/Applications/Local Dictation.app/Contents/Resources" \
+bash Scripts/build.sh "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app"
+
+python3 Scripts/make-release.py \
+  "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app" \
+  "$HOME/Library/Caches/LocalDictation-release" --tag v1.3.0
 ```
 
-If you installed the release in `/Applications`, adjust `LOCAL_DICTATION_RUNTIME` accordingly. Quit other Local Dictation instances before launching your development copy; correction uses the fixed loopback port `127.0.0.1:11437`. Keep one app installation for daily use to avoid ambiguous permission entries.
+Choose an empty release directory. The output contains `Local-Dictation.dmg`, model/release manifests, and SHA256SUMS. DMG creation copies the already-signed bundle without re-signing. Installation also preserves that signature. Finalize every executable/resource before signing.
 
-| Variable | Purpose |
-|---|---|
-| `LOCAL_DICTATION_RUNTIME` | Folder containing `ollama`, `Models`, and `Licenses` |
-| `LOCAL_DICTATION_BUILD_DIR` | Native and Swift build directory; defaults to `.build-native` |
-| `CMAKE_BIN` | CMake executable; defaults to `cmake` |
-| `CODE_SIGN_IDENTITY` | Signing identity; defaults to ad-hoc (`-`) |
-| `LOCAL_DICTATION_RESOURCES` | Development-only override for the app's resource directory |
+`RuntimePaths` supplies sealed executables and external model paths to both engines. Models live in `~/Library/Application Support/Local Dictation/Models`; saved shortcuts/words remain in local preferences. Compatible verified v1.2 weights migrate before replacement. Production downloads use system curl, HTTPS-only redirects, resumable partial files, file locks, disk-space checks, and size/SHA256 verification before atomic publication.
 
-`Scripts/package_app.py` checks model blobs, stages the bundle, signs and verifies it, and uses same-volume renames with rollback when replacing an existing app. It refuses to replace a running destination. Ad-hoc rebuilds can invalidate existing Accessibility and Input Monitoring grants. A stable Developer ID identity and notarization are future release improvements; the current scripts do not perform notarization.
+For development, invoke `Scripts/package_app.py` with `--development` to use `dev.yosef.localdictation.development`, separate preferences/model storage, and no self-install into the public location. A development build cannot replace the public bundle. `--include-models` is an optional legacy/offline package mode and is rejected by the thin-release generator.
+
+Current releases use ad-hoc signing. Non-ad-hoc builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
+
+The isolated free self-signed experiment could not establish a system-trusted signing identity without trust changes. It does not demonstrate recipient TCC grant retention. Self-signing is therefore not adopted for distribution; ad-hoc updates may still require permission renewal. No Apple notarization, automatic updater, or trust import is included.
 
 ## Run regression checks
 
@@ -51,6 +49,11 @@ These checks need macOS developer tools, but do not need model downloads, microp
 bash Scripts/test-core.sh
 bash Scripts/test-shortcuts.sh
 bash Scripts/test-session.sh
+bash Scripts/test-permissions.sh
+bash Scripts/test-vocabulary.sh
+bash Scripts/test-vocabulary-worker.sh
+bash Scripts/test-native-vocabulary-worker.sh
+bash Scripts/test-runtime-setup.sh
 bash Scripts/test-target-inspector.sh
 bash Scripts/test-cleanup.sh
 bash Scripts/test-cleanup-service.sh
@@ -59,6 +62,8 @@ bash Scripts/test-audio.sh
 bash Scripts/test-transcriber.sh
 bash Scripts/test-worker-faults.sh
 python3 Tests/PackagingSmoke.py
+python3 Tests/ThinReleaseSmoke.py
+python3 Tests/RealSigningSmoke.py
 python3 Tests/InstallerSmoke.py
 ```
 
@@ -82,10 +87,10 @@ Use `--compile-only` as the second argument to `test-web-insertion.sh` to build 
 For a complete installed runtime, quit the normal app and run:
 
 ```bash
-"$HOME/Applications/Local Dictation.app/Contents/MacOS/LocalDictation" --diagnostics
+"/Applications/Local Dictation.app/Contents/MacOS/LocalDictation" --diagnostics
 ```
 
-Diagnostics check model startup, correction examples, and silence. Add `--audio /path/to/synthetic-speech.wav` to measure transcription and cleanup of a supplied test file. These diagnostics print their synthetic text to the terminal. They do not verify physical Fn presses or insertion into a particular third-party editor.
+Diagnostics resolve external installed models through RuntimePaths and check model startup, correction examples, and silence. LOCAL_DICTATION_RESOURCES and LOCAL_DICTATION_MODELS are explicit fixture overrides. Add `--audio /path/to/synthetic-speech.wav` to measure transcription and cleanup of a supplied test file. These diagnostics print their synthetic text to the terminal. They do not verify physical Fn presses or insertion into a particular third-party editor.
 
 ## Dictation shortcuts
 
@@ -93,11 +98,11 @@ Diagnostics check model startup, correction examples, and silence. Add `--audio 
 
 Fn / Globe remains the default: double-tap starts recording, one tap stops, and one tap places waiting text after the double-tap window. A double-tap while text is waiting asks the user to resolve it rather than starting a new recording.
 
-**Setup… → Dictation shortcut → Change…** records a custom key combination. Command, Control, or Option plus a key is accepted, with optional Shift. F1–F20 can also be used without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts are rejected. Escape or switching to another app cancels recording the shortcut. One custom press starts, stops, or places waiting text according to the session phase. Held-key repeats and rapid duplicate presses are ignored. Custom mode disables Fn dictation actions; **Use Fn / Globe** restores the default gesture. Setup, menu status, and placement guidance use the selected shortcut.
+**Settings… → Dictation shortcut → Change…** records a custom key combination. Command, Control, or Option plus a key is accepted, with optional Shift. F1–F20 can also be used without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts are rejected. Escape or switching to another app cancels recording the shortcut. One custom press starts, stops, or places waiting text according to the session phase. Held-key repeats and rapid duplicate presses are ignored. Custom mode disables Fn dictation actions; **Use Fn / Globe** restores the default gesture. Settings, menu status, and placement guidance use the selected shortcut.
 
 `HotkeyPreferences.swift` stores the selected `ShortcutConfiguration` as JSON in local `UserDefaults` under `dictation.shortcut.v1`. Registration uses the physical virtual key code and Carbon modifier bits; the display label is presentation only. Invalid stored configurations fall back to Fn / Globe. A valid saved shortcut that cannot be registered is reported as unavailable rather than silently replaced with Fn.
 
-`FnHotkey.configure` uses Carbon global hotkey registration and registers a replacement before releasing an existing binding. The setup recorder intentionally stops the shortcut listener and temporarily unregisters its binding so it can capture the same chord. Failure or cancellation preserves the saved choice; closing the recorder attempts to restore it. If another process has claimed that chord, Setup reports the conflict. A replacement must register successfully before its preference is saved. Global registration cannot detect every app-specific shortcut, so users still need to choose a combination they do not use elsewhere. Shortcut changes affect input control only; recording, transcription, cleanup, and protected placement retain their existing behavior.
+`FnHotkey.configure` uses Carbon global hotkey registration and registers a replacement before releasing an existing binding. The setup recorder intentionally stops the shortcut listener and temporarily unregisters its binding so it can capture the same chord. Failure or cancellation preserves the saved choice; closing the recorder attempts to restore it. If another process has claimed that chord, Settings reports the conflict. A replacement must register successfully before its preference is saved. Global registration cannot detect every app-specific shortcut, so users still need to choose a combination they do not use elsewhere. Shortcut changes affect input control only; recording, transcription, cleanup, and protected placement retain their existing behavior.
 
 `ShortcutConfiguration.validationError` reserves Command-A, H, Z, X, C, V, Q, W, M, Tab, Space, and backtick, including their Shift variants. Any Command-Space combination and Control-Command-Q with optional Shift are also reserved. Escape, Fn, and modifier-only keys cannot be custom bindings. `CustomHotkeyGesture` requires physical key release before another action and applies a 350 ms rearm interval. Keep these checks and phase guards when changing shortcut registration.
 
@@ -108,9 +113,10 @@ The menu action **Export performance measurements…** saves numeric timing and 
 Run backend benchmarks with a synthetic audio fixture after quitting the normal app:
 
 ```bash
+LOCAL_DICTATION_MODELS="$HOME/Library/Application Support/Local Dictation/Models" \
 bash Scripts/benchmark-backend.sh \
   "/Applications/Local Dictation.app/Contents/Resources" \
-  /path/to/synthetic-speech.wav /tmp/v1.2-benchmark.json 5 2 - 20
+  /path/to/synthetic-speech.wav /tmp/v1.3-benchmark.json 5 2 - 20
 # Repeat against the preceding release's source for comparison:
 bash Scripts/benchmark-backend.sh \
   "/Applications/Local Dictation.app/Contents/Resources" \
@@ -119,43 +125,47 @@ bash Scripts/benchmark-backend.sh \
 
 The harness uses an isolated loopback service and reports numeric results without transcripts. The fourth argument is repetitions per condition; the fifth is idle seconds. The sixth selects a baseline Git ref (`-` uses the current source), and the seventh optionally overrides warm repetitions. These commands reproduce the published 20 warm / 5 other runs per length. Use more than 600 seconds to exercise the older model-retention timeout. Short idle measurements do not establish performance after that timeout. Backend benchmarks exclude microphone capture and editor delivery; use the interactive exporter for those stages.
 
+## Verify custom words with real models
+
+The opt-in harness uses synthetic speech from `Tests/VocabularyFixtures.json`, never microphone recordings. Quit the normal app and use an exclusive model window:
+
+```bash
+bash Scripts/test-real-vocabulary.sh --run \
+  "/Applications/Local Dictation.app/Contents/Resources" \
+  "$HOME/Library/Application Support/Local Dictation/Models" \
+  "$HOME/Library/Caches/LocalDictation-vocabulary-fixtures" \
+  /tmp/vocabulary-report.json 3 20 10
+```
+
+It alternates vocabulary off/on, measures20 repeats per mode for one short utterance and10 for one passage longer than30seconds, and reports per-case stage medians/p95. Reports contain numeric flags/timings, not transcripts or vocabulary contents. Test case definitions use synthetic public example terms. `--compile-only` prepares the harness without running models, and `--cleanup-only` checks direct saved-alias corrections.
+
+For explicit production model-storage integration, `Scripts/test-production-model-store.sh` supports verified migration or a tiny pinned metadata download. It requires supplied resources/model/legacy paths and never launches engines. Do not point an integration download check at existing production storage.
+
 ## Source map
 
 | Location | Responsibility |
 |---|---|
 | `Sources/DictationCore/` | Fn/custom gestures, shortcut validation, and protected dictation session state |
-| `Sources/LocalDictation/AppMain.swift` | Menu, setup, state, permissions, recording lifecycle |
+| `Sources/LocalDictation/AppMain.swift` | Menu, Settings, session state, permission/model setup, recording lifecycle |
 | `DictationHUD.swift` + `InteractionMetrics.swift` | Nonactivating status panel and content-free local timing export |
 | `FnHotkey.swift` | Input activity event tap, Fn/Globe gestures, and custom Carbon hotkey registration |
-| `ShortcutRecorder.swift` + `HotkeyPreferences.swift` | Setup shortcut capture and local preference persistence |
+| `ShortcutRecorder.swift` + `HotkeyPreferences.swift` | Shortcut capture and local preference persistence |
 | `AudioRecorder.swift` | Capture, resampling, bounded memory, interruption recovery |
 | `WhisperTranscriber.swift` + `Native/whisper-worker.cpp` | Persistent local speech worker, framed audio IPC, cancellation |
 | `LocalCorrectionService.swift` + `CleanupClient.swift` | Bundled Ollama lifecycle, cleanup request, conservative validation |
 | `TargetInspector.swift` | Pinned field identity, serialized Accessibility inspection, focus and caret validation |
 | `TextInserter.swift` + `DeliveryCoordinator.swift` | Validated paste delivery, serialized clipboard leases, insertion observation, and restoration |
 | `Tests/` | Gesture, cleanup, audio, worker, insertion, and packaging regressions |
-| `Distribution/` | Installer template and pinned current-release metadata |
+| `InstallController.swift` + `RuntimePaths.swift` + `ModelStore.swift` | Canonical installation, rollback, sealed executables, verified external weights |
+| `Vocabulary.swift` + `VocabularyPreferences.swift` + `CustomWordsController.swift` | Validated words, immutable snapshots, local persistence, native editor |
+| `PermissionDiagnostics.swift` | Bounded local installation/readiness records |
+| `Distribution/` | Historical v1.2 Terminal installer and release metadata |
 
-## Produce release assets
+## Release gates
 
-Build and validate a complete app first. Set its version in `Resources/Info.plist` before building, then use an empty output folder:
+Use the thin-app/DMG packaging command above only after the installed app passes its checks. Record unchanged relaunches separately from changed-build updates; macOS privacy grants may behave differently. Test the actual DMG and production installation transaction, not only mocked rollback cases.
 
-```bash
-python3 Scripts/make-release.py \
-  "$PWD/.build-native/Local Dictation.app" \
-  "$PWD/release-assets" --tag v1.2.0
-```
-
-The release builder copies the app, includes first- and third-party notices, signs that copy ad-hoc, verifies it, and creates two archive parts below GitHub's 2 GiB asset limit. The original app is not modified. It also creates:
-
-- `Local-Dictation-Installer.zip`: a small, inspectable `.command` installer.
-- `install.sh`: the same installer for Terminal/offline use.
-- `release-manifest.json`: part sizes and SHA-256 hashes.
-- `SHA256SUMS`: hashes for all release files.
-
-The generated installer and manifest are also written to `Distribution/` for review. Upload all assets to one matching release tag. Never publish an installer before its matching parts have finished uploading. The installer embeds hashes, checks signatures, refuses implicit overwrites, and restores the previous app on failed replacement. It does not change Gatekeeper, privacy grants, or keyboard settings.
-
-Test the complete installer with `--assets-dir` and a separate `--destination` before publishing. Model weights, archives, application bundles, caches, and test output belong outside Git history. Retain dependency licenses when changing the bundled runtime.
+Upload all assets to one matching tag only after installed-app testing and the published validation record are complete. The v1.2 scripts under `Distribution/` are historical compatibility tools; the v1.3 primary installer is the native app in the DMG. Model weights, app bundles, signing keys, caches, and audio fixtures stay outside Git. Retain third-party licenses when changing the runtime.
 
 ## Contribution scope
 

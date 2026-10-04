@@ -145,6 +145,12 @@ final class TextInserter {
         return target
     }
 
+    /// Display placement uses the original identity without reading field text.
+    func originWindowFrame(for anchor: Anchor) async -> CGRect? {
+        guard anchor.owner == owner else { return nil }
+        return await inspector.originWindowFrame(anchor)
+    }
+
     private func checkOrigin(_ anchor: Anchor) throws {
         try Task.checkCancellation()
         guard anchor.owner == owner, anchor.epoch == captureEpoch,

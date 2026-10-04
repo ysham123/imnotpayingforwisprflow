@@ -34,6 +34,6 @@ server = http.server.HTTPServer(('127.0.0.1', 0), Server)
 server.serve_forever()
 PY
 swiftc -swift-version 5 -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "$source_dir/Sources/LocalDictation/CleanupClient.swift" "$source_dir/Tests/CleanupLeaseSmoke.swift" \
+  "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/LocalDictation/CleanupClient.swift" "$source_dir/Tests/CleanupLeaseSmoke.swift" \
   -o "$build_dir/cleanup-service-smoke"
 "$build_dir/cleanup-service-smoke" "$(command -v python3)" "$resources"
