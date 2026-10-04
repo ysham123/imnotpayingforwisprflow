@@ -37,7 +37,7 @@ The identity anchor reads no field text. Full target inspection runs on a serial
 
 UI fixtures verify nonactivation across all nine HUD states and actual action-button clicks preserving an external synthetic editor's focus and caret. Multi-display geometry is bounded to the selected screen. Physical Fn use, six-app compatibility, full-screen Spaces, and VoiceOver still require installed-candidate live checks; the previous release's user reports below do not validate v1.2.
 
-The shortcut chooser fixture sends keyboard events only through its own AppKit event queue. Native Carbon checks reserve synthetic test combinations without posting global keyboard input. These verify registration and chooser behavior separately. Build 5 was installed through the final offline installer and relaunched with Setup; its version, strict signature, main executable, helpers, and Info.plist matched the signed candidate. An installed physical custom-shortcut dictation/placement check is still needed. Invalid and canceled choices preserve the saved configuration. While choosing a key, the prior chord is temporarily unregistered so it can be captured; restoration can report a conflict if another app claims it in the meantime.
+The shortcut chooser fixture sends keyboard events only through its own AppKit event queue. Native Carbon checks reserve synthetic test combinations without posting global keyboard input. These verify registration and chooser behavior separately. Build 5 was installed through the final offline installer and relaunched with Setup; its version, strict signature, main executable, helpers, and Info.plist matched the signed candidate. After being asked to test a custom shortcut for dictation and click-away placement in the installed build, the creator reported that everything worked and requested publication on October 4, 2026. This is a user-reported live check; the fixture separately verifies saved-setting reload, but an installed-app restart with the custom binding was not independently observed. Invalid and canceled choices preserve the saved configuration. While choosing a key, the prior chord is temporarily unregistered so it can be captured; restoration can report a conflict if another app claims it in the meantime.
 
 ### Performance evidence
 
@@ -74,9 +74,9 @@ The final compact-indicator bundle passed the real offline installer on October 
 
 The creator confirmed that the earlier installed v1.2 candidate dictated successfully, then reported that both setup and completion UI stayed visible. After installing the compact-indicator revision through the verified release installer in /Applications, the creator confirmed that the design looked better and both windows disappeared correctly. A subsequent report identified a rectangular outline outside the capsule. The visual-effect material now has its own capsule mask, since clipping its content layer alone did not mask the backdrop and window shadow. The release build and seven HUD regressions passed with this change. After the masked build was installed through the verified offline installer, the creator confirmed that the rectangular outline was gone and the app was working correctly. Cached-view previews cannot verify the WindowServer shadow. Desktop-control calls timed out for TextEdit, app inventory, and the installed setup window, so no automated six-app live-compatibility result is claimed.
 
-### Remaining release gates
+### Remaining validation limits
 
-- Complete installed checks for the new custom-shortcut setting, including restart persistence and explicit placement. The existing Fn flow and masked capsule have user-reported live confirmation; the six-app matrix and physical latency measurements remain incomplete.
+The creator approved publication after the installed custom-shortcut check. The six-app live matrix, full-screen/multiple-display use, live VoiceOver behavior, physical-display/microphone latency distributions, and an installed-app restart with a custom binding have not been independently verified. These limits remain separate from the automated fixture and user-reported checks above.
 
 ## v1.1.1 insertion and live checks
 
