@@ -461,16 +461,6 @@ struct CleanupClient: Sendable {
         func isNumber(_ word: String) -> Bool {
             numbers.contains(word) || word.first?.isNumber == true
         }
-        func correctionNo(_ index: Int, words: [Word], text: String) -> Bool {
-            guard words[index].text == "no", index > 0, index + 1 < words.count else { return false }
-            let before = words[index - 1], after = words[index + 1]
-            let normalized = text.lowercased().replacingOccurrences(of: "’", with: "'") as NSString
-            let gap = normalized.substring(with: NSRange(location: NSMaxRange(before.range), length: after.range.location - NSMaxRange(before.range)))
-            let namedRepair = protectedNames.contains(before.text) && protectedNames.contains(after.text)
-                && gap.contains(",")
-            guard (isNumber(before.text) && isNumber(after.text)) || (days.contains(before.text) && days.contains(after.text)) || namedRepair else { return false }
-            return !gap.contains(where: { ".!?;\n".contains($0) })
-        }
         let before = words(source), after = words(output)
         func content(_ words: [Word]) -> [Int] {
             words.indices.filter { !grammar.contains(words[$0].text) && !negatives.contains(words[$0].text) }
@@ -550,6 +540,19 @@ struct CleanupClient: Sendable {
             guard retainedStutter || correctedName(at: slot) else {
                 throw CleanupError.changedProtectedText
             }
+        }
+        func correctionNo(_ index: Int, words: [Word], text: String) -> Bool {
+            guard words[index].text == "no", index > 0, index + 1 < words.count else { return false }
+            let before = words[index - 1], after = words[index + 1]
+            let normalized = text.lowercased().replacingOccurrences(of: "’", with: "'") as NSString
+            let gap = normalized.substring(with: NSRange(location: NSMaxRange(before.range), length: after.range.location - NSMaxRange(before.range)))
+            // Only a real superseded source-name occurrence licenses removing
+            // this no. Merely mentioning two retained names is still negation.
+            let originalSlot = sourceContent.firstIndex(of: index - 1)
+            let namedRepair = text == source && protectedNames.contains(before.text) && protectedNames.contains(after.text)
+                && originalSlot.map { !retained.contains($0) && correctedName(at: $0) } == true
+            guard (isNumber(before.text) && isNumber(after.text)) || (days.contains(before.text) && days.contains(after.text)) || namedRepair else { return false }
+            return !gap.contains(where: { ".!?;\n".contains($0) })
         }
         func anchors(_ words: [Word], text: String, content: [Int], mapping: [Int]) -> [String] {
             words.indices.compactMap { index in
