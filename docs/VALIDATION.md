@@ -27,6 +27,8 @@ The release executable compiles with Swift 5.10. A complete candidate bundle has
 | WebKit insertion | 16 cases passed, including async pinned input/rich-editor capture and explicit placement |
 | Electron insertion | 16 cases passed in the final isolated run |
 | Floating indicator | 7 checks passed: compact capsule geometry, all states and real action clicks preserve editor focus; changed guidance is announced and level updates stay silent |
+| Custom shortcuts | 123 validation, preference, gesture, and input-filter checks; native exclusive Carbon registration, conflict preservation, release/reacquisition, and reset checks passed |
+| Shortcut chooser | 8 isolated AppKit groups passed: posted-key routing, invalid/repeated input, Escape/Cancel, rejected/accepted choices, outside-window typing, actual deactivation, and reopening |
 | Packaging/installer | 4 package rollback, 7 source/output integrity, and 8 installer failure/replacement checks passed; rollback fault tests mock signing |
 
 One earlier Electron run, overlapping other test/model activity, produced an unexplained textarea selection mismatch. The complete isolated repeat passed without a product-code change. A further 12 focused selection replacements (six asynchronous anchors and six legacy captures, including Unicode/emoji and multiline text) also matched DOM/Accessibility ranges, delivered one paste each, and restored the clipboard. This remains a validation limitation; the repeat does not establish a root cause or a fix for that initial result.
@@ -34,6 +36,8 @@ One earlier Electron run, overlapping other test/model activity, produced an une
 The identity anchor reads no field text. Full target inspection runs on a serial worker with request-local deadlines. A paste dispatch releases recording readiness, while the clipboard lease and insertion observation continue separately. The delivery fixture waits for the first insertion to be observed before moving its field, still within the clipboard read window; it does not claim that a posted global keyboard event is synchronously consumed.
 
 UI fixtures verify nonactivation across all nine HUD states and actual action-button clicks preserving an external synthetic editor's focus and caret. Multi-display geometry is bounded to the selected screen. Physical Fn use, six-app compatibility, full-screen Spaces, and VoiceOver still require installed-candidate live checks; the previous release's user reports below do not validate v1.2.
+
+The shortcut chooser fixture sends keyboard events only through its own AppKit event queue. Native Carbon checks reserve synthetic test combinations without posting global keyboard input. These verify registration and chooser behavior separately. Build 5 was installed through the final offline installer and relaunched with Setup; its version, strict signature, main executable, helpers, and Info.plist matched the signed candidate. An installed physical custom-shortcut dictation/placement check is still needed. Invalid and canceled choices preserve the saved configuration. While choosing a key, the prior chord is temporarily unregistered so it can be captured; restoration can report a conflict if another app claims it in the meantime.
 
 ### Performance evidence
 
@@ -68,11 +72,11 @@ During release preparation, a source file reported a nonzero size but returned a
 
 The final compact-indicator bundle passed the real offline installer on October 4, 2026, in a separate local destination. Both release-part hashes passed, and the installed executable, speech worker, Ollama helper, and Info.plist matched the verified candidate byte for byte. The installed bundle passed strict signature verification and identity/version checks. The temporary test copy was removed afterward; the candidate and release files remain available.
 
-The creator confirmed that the earlier installed v1.2 candidate dictated successfully, then reported that both setup and completion UI stayed visible. The compact-indicator revision addresses that feedback. Its final installed visual check is pending. Desktop-control calls timed out for TextEdit, app inventory, and the installed setup window, so no automated six-app live-compatibility result is claimed.
+The creator confirmed that the earlier installed v1.2 candidate dictated successfully, then reported that both setup and completion UI stayed visible. After installing the compact-indicator revision through the verified release installer in /Applications, the creator confirmed that the design looked better and both windows disappeared correctly. A subsequent report identified a rectangular outline outside the capsule. The visual-effect material now has its own capsule mask, since clipping its content layer alone did not mask the backdrop and window shadow. The release build and seven HUD regressions passed with this change. After the masked build was installed through the verified offline installer, the creator confirmed that the rectangular outline was gone and the app was working correctly. Cached-view previews cannot verify the WindowServer shadow. Desktop-control calls timed out for TextEdit, app inventory, and the installed setup window, so no automated six-app live-compatibility result is claimed.
 
 ### Remaining release gates
 
-- Install and test the candidate's physical Fn and explicit placement flow in real applications.
+- Complete installed checks for the new custom-shortcut setting, including restart persistence and explicit placement. The existing Fn flow and masked capsule have user-reported live confirmation; the six-app matrix and physical latency measurements remain incomplete.
 
 ## v1.1.1 insertion and live checks
 

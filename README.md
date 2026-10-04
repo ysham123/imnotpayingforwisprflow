@@ -19,6 +19,8 @@
 
 **Click a text box. Double-tap Fn / Globe. Speak. Tap Fn once to finish.**
 
+Fn / Globe is the default. You can choose a custom keyboard shortcut in **Setup… → Dictation shortcut → Change…**.
+
 Local Dictation is a native menu-bar app that turns speech into text, removes fillers and accidental repetition, and resolves clear spoken corrections before inserting the result. Speech recognition and cleanup run on your Mac. The download includes both models and their runtime.
 
 No subscription, API key, account, or separate Ollama installation is required. No recordings or transcript history are saved.
@@ -88,13 +90,13 @@ Open **Local Dictation.app**, then choose **Setup…** from its microphone menu 
 |---|---|
 | **Microphone** | Capture audio while you dictate |
 | **Accessibility** | Identify your text field and insert the result |
-| **Input Monitoring** | Recognize the Fn / Globe shortcut across apps |
+| **Input Monitoring** | Recognize Fn / Globe and detect physical input changes across apps |
 
 Enable **Local Dictation itself** in each permission list. If macOS asks you to quit and reopen it, do so.
 
-### 3. Free up the Fn / Globe key
+### 3. Choose your dictation shortcut
 
-In **System Settings → Keyboard**:
+To keep the default **Fn / Globe** gesture, free up that key in **System Settings → Keyboard**:
 
 - Set **Press 🌐 key to** to **Do Nothing**.
 - Make sure Apple's built-in Dictation shortcut does not use Fn / Globe.
@@ -102,14 +104,22 @@ In **System Settings → Keyboard**:
 
 Local Dictation does not change these settings automatically.
 
+For a custom shortcut, open **Setup… → Dictation shortcut → Change…**, then press your preferred combination. Use **Command**, **Control**, or **Option** plus a key; **Shift** can be added. **F1–F20** also work without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts such as Command-C, Command-V, and Command-Tab are rejected. Press Escape or switch to another app to cancel the change.
+
+Choose a combination you do not use in other apps. A failed or canceled change leaves your saved choice unchanged. The dictation shortcut pauses while the chooser is open; close it to resume. If the previous shortcut has become unavailable, Setup reports the conflict. Conflict detection cannot identify every shortcut used inside individual apps. The choice is saved locally and restored when you reopen Local Dictation. Choose **Use Fn / Globe** to reset it.
+
 ### 4. Dictate
 
-1. Wait until the microphone menu says **Ready · double-tap Fn**, then click the text box where you want your words. Models can take a moment to load on first use.
+With the default Fn / Globe gesture:
+
+1. Wait until the microphone menu says **Ready**, then click the text box where you want your words. Models can take a moment to load on first use.
 2. **Double-tap Fn / Globe** to start. A compact floating pill shows **Listening** and microphone activity. Setup gets out of the way when you begin.
 3. Speak naturally, including corrections such as “Thursday, sorry, Friday.”
 4. **Tap Fn once** to finish. Wait for transcription and cleanup, then check the text.
 
-If you click away or move the cursor, the indicator shows **Text ready**. Click the intended text box and **tap Fn once** to place your words. A short pause distinguishes this single tap from a double-tap. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; a double-tap will remind you instead of overwriting it.
+With a custom shortcut, **press it once to start and once to finish**. The menu, setup, and floating indicator show the selected shortcut. Fn / Globe dictation gestures are inactive until you reset to **Use Fn / Globe**.
+
+If you click away or move the cursor, the indicator shows **Text ready**. Click the intended text box and use your selected shortcut: **tap Fn once** with the default gesture, or **press your custom shortcut once**. With Fn / Globe, a short pause distinguishes this single tap from a double-tap. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; it is protected from being overwritten by a new recording.
 
 <p align="center">
   <img src=".github/assets/status-ready.png" alt="Text ready. Click a text box, then tap Fn. Copy and Discard buttons." width="392" />
@@ -119,19 +129,19 @@ Completion feedback disappears quickly, or immediately when you click elsewhere.
 
 **Paste sent** means the app sent one paste but could not confirm the editor's update. Check the field before using **Copy last result**. It never automatically pastes the same result twice.
 
-Double-tapping to finish also stops once. Use short taps rather than holding the key. The app never presses Return or sends a message for you.
+With Fn / Globe, double-tapping to finish also stops once. Use short taps rather than holding the key. The app never presses Return or sends a message for you.
 
 ## What runs under the hood
 
 ```mermaid
 flowchart LR
-    A[Fn / Globe] --> B[Microphone audio in memory]
+    A[Dictation shortcut] --> B[Microphone audio in memory]
     B --> C[Whisper transcription]
     C --> D[Qwen cleanup]
     D --> E{Can the original field be verified?}
     E -->|Yes| F[Paste at the original cursor]
     E -->|No| G[Hold text for explicit placement]
-    G --> H1[Click a field and tap Fn once]
+    G --> H1[Click a field and press the placement shortcut]
     D -. Cleanup unavailable .-> H[Keep original transcript]
     H --> E
 ```
@@ -165,9 +175,12 @@ The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting 
 |---|---|
 | Fn does nothing | Open Setup, check all three permissions, and remove competing Fn shortcuts. |
 | Fn does nothing on an external keyboard | Try the Mac's built-in Fn / Globe key. Some third-party keyboards handle Fn internally and do not send an event macOS can detect. |
+| Custom shortcut is rejected or already registered | Choose another combination, or close the chooser to resume your saved shortcut. If that shortcut is unavailable, choose another or reset with **Setup… → Use Fn / Globe**. |
+| Custom shortcut also triggers an action in another app | Choose an unused combination. Registration conflict checks cannot detect every app-specific shortcut. |
+| A function-key shortcut changes brightness, volume, or another media control | Configure your keyboard to send the corresponding F-key event rather than a media action. |
 | Permissions look enabled, but Setup says “needed” | Quit the app. In Privacy & Security, toggle Local Dictation off and back on, then reopen. If a stale Accessibility entry persists, remove it and add the current app again. |
-| Text ready | Click the intended text box and tap Fn once. If the field cannot be verified, choose **Copy** and paste manually. |
-| The cursor or text field changed | Your text waits. Select its destination and tap Fn once, or copy/discard it. |
+| Text ready | Click the intended text box and use your selected shortcut once. If the field cannot be verified, choose **Copy** and paste manually. |
+| The cursor or text field changed | Your text waits. Select its destination and use the placement shortcut, or copy/discard it. |
 | “Paste sent” | Check the field before pasting again. The app could not confirm the result and does not retry automatically. |
 | Correction is unavailable | Dictation can use the raw transcript. Use **Retry local engines** to retry correction startup. |
 | Microphone changed or recording stopped | Captured speech is retained when possible and processed; the status explains the interruption. |

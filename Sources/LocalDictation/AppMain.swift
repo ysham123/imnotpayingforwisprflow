@@ -37,6 +37,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var retryMenu: NSMenuItem!
     private var setupWindow: NSWindow?
     private var setupStatus: NSTextField?
+    private var setupSubtitle: NSTextField?
+    private var shortcutLabel: NSTextField?
+    private var shortcutChangeButton: NSButton?
+    private var shortcutResetButton: NSButton?
+    private var keyboardHint: NSTextField?
+    private let shortcutRecorder = ShortcutRecorder()
+    private var shortcutConfiguration = HotkeyPreferences.load()
+    private var shortcutFailure: String?
+    private var recordingShortcut = false
     private var timer: Timer?
     private var listeningTimer: Timer?
     private var targetTask: Task<TextInserter.Target?, Never>?
@@ -76,7 +85,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if CommandLine.arguments.contains("--paste-test") {
             runPasteTest(); return
         }
+        if case .failure(let error) = hotkey.configure(shortcutConfiguration) {
+            shortcutFailure = error.localizedDescription
+        }
         configureHUD()
+        updateShortcutAppearance()
         configureLifecycle()
         Task { await prepareEngines() }
         recorder.onAutomaticStop = { [weak self] in self?.finishDictation() }
@@ -85,7 +98,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         RunLoop.main.add(timer!, forMode: .common)
         refreshPermissions()
-        if !allPermissions || CommandLine.arguments.contains("--setup") { showSetup() }
+        if !allPermissions || shortcutFailure != nil || CommandLine.arguments.contains("--setup") { showSetup() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -95,7 +108,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === setupWindow,
-              allPermissions, monitoring else { return }
+              allPermissions, monitoring, window.attachedSheet == nil else { return }
         window.orderOut(nil)
     }
 
@@ -112,7 +125,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var permissionStatus: String {
         let missing = missingPermissions
         if !missing.isEmpty { return "Setup required: " + missing.joined(separator: ", ") }
-        return monitoring ? (correctionReady ? "Ready · double-tap Fn" : "Ready · correction unavailable or starting") : "Fn listener could not start · check Input Monitoring"
+        if let shortcutFailure { return "Shortcut unavailable · " + shortcutFailure }
+        return monitoring ? (correctionReady ? "Ready · \(startInstruction)" : "Ready · correction unavailable or starting") : "Shortcut listener could not start · check Input Monitoring"
     }
 
     private func configureMenu() {
@@ -208,12 +222,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func refreshPermissions() {
         guard !isTerminating, !CommandLine.arguments.contains("--diagnostics") else { return }
+        if recordingShortcut { updateSetupStatus(); return }
         inserter.primeFrontmostAccessibility()
         if monitoring && !hotkey.isActive { hotkey.stop(); monitoring = false }
         if !FnHotkey.permissionGranted && monitoring {
             hotkey.stop(); monitoring = false
         }
-        if FnHotkey.permissionGranted && !monitoring {
+        if FnHotkey.permissionGranted && !monitoring && shortcutFailure == nil {
             monitoring = hotkey.start { [weak self] action in
                 switch action {
                 case .start: self?.startDictation()
@@ -221,6 +236,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .placePending: self?.placePending()
                 case .resolvePending: self?.showPending("Insert, copy, or discard your previous text")
                 }
+            }
+            if !monitoring, let error = hotkey.lastRegistrationError {
+                shortcutFailure = error.localizedDescription
             }
             syncHotkey()
         }
@@ -291,7 +309,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return try? await inserter.inspect(anchor)
             }
             syncHotkey(); hud.show(.listening)
-            updateStatus("Listening · tap Fn to finish")
+            updateStatus("Listening · \(finishInstruction)")
             if !engineReady {
                 let generation = engineGeneration
                 Task { [weak self] in
@@ -370,9 +388,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         suspendEnginesIfIdle()
     }
 
-    private func showPending(_ message: String = "Text ready · click a text box, then tap Fn once") {
+    private func showPending(_ message: String? = nil) {
         guard state.pendingText != nil else { return }
-        dismissTask?.cancel(); syncHotkey(); updateStatus(message)
+        dismissTask?.cancel(); syncHotkey()
+        updateStatus(message ?? "Text ready · click a text box, then \(placementInstruction)")
         hud.show(.ready, message: message)
     }
 
@@ -406,7 +425,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     guard let self, state.didDispatch(text, for: token) else { return }
                     metrics.mark("dispatched", token); metrics.mark("nextCaptureReady", token)
                     processingTask = nil; targetTask = nil; recoveryNeeded = false
-                    syncHotkey(); updateStatus("Paste sent · double-tap Fn for another dictation")
+                    syncHotkey(); updateStatus("Paste sent · \(startInstruction) for another dictation")
                     completionFeedback.begin(token)
                     hud.show(.pasteSent)
                     dismissHUD(after: 1.8, for: token)
@@ -472,7 +491,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         listeningTimer?.invalidate(); listeningTimer = nil; recorder.cancel()
         metrics.finish("canceled", canceled); syncHotkey()
         if state.pendingText != nil { showPending() }
-        else { updateStatus("Canceled · double-tap Fn when ready"); hud.hide() }
+        else { updateStatus("Canceled · \(startInstruction) when ready"); hud.hide() }
         if releaseEnginesWhenIdle { suspendEnginesIfIdle() }
         else {
             let generation = engineGeneration
@@ -629,9 +648,78 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         recorder.cancel(); transcriber.shutdown(); correctionService.stop()
     }
 
+    private var usesFn: Bool { shortcutConfiguration == .fn }
+    private var startInstruction: String {
+        usesFn ? "double-tap Fn" : "press \(shortcutConfiguration.displayName)"
+    }
+    private var finishInstruction: String {
+        usesFn ? "tap Fn to finish" : "press \(shortcutConfiguration.displayName) to finish"
+    }
+    private var placementInstruction: String {
+        usesFn ? "tap Fn once" : "press \(shortcutConfiguration.displayName) once"
+    }
+
+    private func updateShortcutAppearance() {
+        shortcutLabel?.stringValue = shortcutConfiguration.displayName
+        hud.finishInstruction = usesFn ? "Tap Fn to finish" : "Press \(shortcutConfiguration.displayName) to finish"
+        hud.placementInstruction = usesFn ? "Click a text box · tap Fn"
+            : "Click a text box · press \(shortcutConfiguration.displayName)"
+        setupSubtitle?.stringValue = usesFn
+            ? "Click a text box. Double-tap Fn / Globe to start. Tap again to finish. If you click away, your text waits: select a text box and tap Fn once to place it."
+            : "Click a text box. Press \(shortcutConfiguration.displayName) once to start and again to finish. If you click away, select the intended text box and press the same shortcut to place your waiting text."
+        keyboardHint?.stringValue = usesFn
+            ? "In Keyboard settings, set “Press 🌐 key to” to “Do Nothing” and make sure Apple Dictation does not use Fn / Globe. Quit Wispr Flow while using the same Fn key."
+            : "Your shortcut is reserved while Local Dictation is running. Choose a combination you do not use in other apps. Function keys may require Fn depending on your keyboard settings."
+        updateSetupStatus()
+    }
+
+    @objc private func changeShortcut() {
+        guard phase == .idle, !recordingShortcut, !copyInProgress, !isTerminating,
+              let window = setupWindow else { return }
+        recordingShortcut = true
+        hotkey.stop(); monitoring = false
+        updateStatus("Choosing a shortcut · Escape to cancel")
+        shortcutRecorder.begin(on: window, accept: { [weak self] candidate in
+            guard let self else { return "Setup closed. Try again." }
+            switch self.hotkey.configure(candidate) {
+            case .failure(let error): return error.localizedDescription
+            case .success:
+                guard HotkeyPreferences.save(candidate) else { return "This shortcut could not be saved." }
+                self.shortcutConfiguration = candidate
+                self.shortcutFailure = nil
+                self.updateShortcutAppearance()
+                return nil
+            }
+        }, completion: { [weak self] in
+            guard let self else { return }
+            self.recordingShortcut = false
+            self.resumeShortcut()
+            if !NSApp.isActive, self.allPermissions, self.monitoring { self.setupWindow?.orderOut(nil) }
+        })
+    }
+
+    @objc private func resetShortcut() {
+        guard phase == .idle, !recordingShortcut, !copyInProgress, !isTerminating else { return }
+        hotkey.stop(); monitoring = false
+        shortcutConfiguration = .fn
+        _ = HotkeyPreferences.save(.fn)
+        resumeShortcut()
+    }
+
+    private func resumeShortcut() {
+        switch hotkey.configure(shortcutConfiguration) {
+        case .success: shortcutFailure = nil
+        case .failure(let error): shortcutFailure = error.localizedDescription
+        }
+        lastPermissionState = nil
+        updateShortcutAppearance()
+        refreshPermissions()
+        if shortcutFailure != nil { updateStatus(permissionStatus) }
+    }
+
     @objc private func showSetup() {
         if let setupWindow { NSApp.activate(ignoringOtherApps: true); setupWindow.makeKeyAndOrderFront(nil); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 500),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 650),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Local Dictation"; window.isReleasedWhenClosed = false; window.center()
         window.delegate = self
@@ -641,6 +729,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         title.font = .systemFont(ofSize: 23, weight: .semibold); stack.addArrangedSubview(title)
         let subtitle = NSTextField(wrappingLabelWithString: "Click a text box. Double-tap Fn / Globe to start. Tap again to finish. If you click away, your text waits: select a text box and tap Fn once to place it.")
         subtitle.font = .systemFont(ofSize: 14); stack.addArrangedSubview(subtitle)
+        setupSubtitle = subtitle
+        let shortcutHeading = NSTextField(labelWithString: "Dictation shortcut")
+        shortcutHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+        let shortcut = NSTextField(labelWithString: shortcutConfiguration.displayName)
+        shortcut.font = .systemFont(ofSize: 13, weight: .medium)
+        shortcutLabel = shortcut
+        let change = NSButton(title: "Change…", target: self, action: #selector(changeShortcut))
+        change.bezelStyle = .rounded; shortcutChangeButton = change
+        let reset = NSButton(title: "Use Fn / Globe", target: self, action: #selector(resetShortcut))
+        reset.bezelStyle = .rounded; shortcutResetButton = reset
+        let shortcutRow = NSStackView(views: [shortcut, change, reset])
+        shortcutRow.spacing = 10; shortcutRow.alignment = .centerY
+        let shortcutSection = NSStackView(views: [shortcutHeading, shortcutRow])
+        shortcutSection.orientation = .vertical; shortcutSection.alignment = .leading; shortcutSection.spacing = 6
+        stack.addArrangedSubview(shortcutSection)
         let permissions = NSStackView(); permissions.orientation = .horizontal; permissions.spacing = 8
         for (label, action) in [("Microphone", #selector(allowMicrophone)), ("Accessibility", #selector(allowAccessibility)), ("Input Monitoring", #selector(allowMonitoring))] {
             let button = NSButton(title: label, target: self, action: action); button.bezelStyle = .rounded
@@ -651,7 +754,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusLabel.font = .systemFont(ofSize: 12); statusLabel.textColor = .secondaryLabelColor
         setupStatus = statusLabel; stack.addArrangedSubview(statusLabel)
         let keyboard = NSTextField(wrappingLabelWithString: "In Keyboard settings, set “Press 🌐 key to” to “Do Nothing” and make sure Apple Dictation does not use Fn / Globe. Quit Wispr Flow while using the same Fn key.")
-        keyboard.font = .systemFont(ofSize: 13); stack.addArrangedSubview(keyboard)
+        keyboard.font = .systemFont(ofSize: 13); keyboardHint = keyboard; stack.addArrangedSubview(keyboard)
         let keyboardButton = NSButton(title: "Open Keyboard Settings", target: self, action: #selector(openKeyboard))
         keyboardButton.bezelStyle = .rounded; stack.addArrangedSubview(keyboardButton)
         let footer = NSTextField(wrappingLabelWithString: "Runs on your Mac. Audio stays temporary. No recordings or transcript history are saved.")
@@ -662,13 +765,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 24)
         ])
-        setupWindow = window; updateSetupStatus()
+        setupWindow = window; updateShortcutAppearance(); updateSetupStatus()
         NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
     }
 
     private func updateSetupStatus() {
+        let canChange = phase == .idle && !recordingShortcut && !copyInProgress && !isTerminating
+        shortcutChangeButton?.isEnabled = canChange
+        shortcutResetButton?.isEnabled = canChange && shortcutConfiguration != .fn
         let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        setupStatus?.stringValue = "Microphone: \(mic ? "allowed" : "needed")   Accessibility: \(TextInserter.accessibilityGranted() ? "allowed" : "needed")\nInput Monitoring: \(FnHotkey.permissionGranted ? "allowed" : "needed")\nFn listener: \(monitoring ? "active" : "not active")\n\(correctionStatus)\n\(status)"
+        let shortcutProblem = shortcutFailure.map { "\nShortcut: \($0)" } ?? ""
+        setupStatus?.stringValue = "Microphone: \(mic ? "allowed" : "needed")   Accessibility: \(TextInserter.accessibilityGranted() ? "allowed" : "needed")\nInput Monitoring: \(FnHotkey.permissionGranted ? "allowed" : "needed")\nShortcut listener: \(monitoring ? "active" : "not active")\(shortcutProblem)\n\(correctionStatus)\n\(status)"
     }
 
     @objc private func allowMicrophone() {

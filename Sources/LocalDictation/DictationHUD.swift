@@ -52,6 +52,8 @@ final class DictationHUD {
     var onCancel: (() -> Void)?
     var onCopy: (() -> Void)?
     var onDiscard: (() -> Void)?
+    var finishInstruction = "Tap Fn to finish"
+    var placementInstruction = "Click a text box · tap Fn"
 
     private(set) var panel: NSPanel
     private(set) var state: State?
@@ -192,7 +194,9 @@ final class DictationHUD {
         if let screen { displayID = Self.id(of: screen) }
         if displayID == nil { displayID = Self.id(of: Self.activeScreen) }
         title.stringValue = state.title
-        var guidance = message ?? state.detail
+        let defaultDetail = state == .listening ? finishInstruction
+            : (state == .ready ? placementInstruction : state.detail)
+        var guidance = message ?? defaultDetail
         // The menu includes its state in the same string; the capsule already
         // has a dedicated title, so avoid repeating it in the smaller subtitle.
         let prefix = state.title + " · "
@@ -278,6 +282,17 @@ private final class CapsuleSurface: NSVisualEffectView {
     override func layout() {
         super.layout()
         layer?.cornerRadius = bounds.height / 2
+        // Layer clipping alone leaves the behind-window material rectangular.
+        // Mask the material itself so its backdrop and window shadow follow the
+        // capsule too. The drawing image stays sharp at either display scale.
+        if bounds.width > 0, bounds.height > 0, maskImage?.size != bounds.size {
+            maskImage = NSImage(size: bounds.size, flipped: false) { rect in
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: rect.height / 2,
+                             yRadius: rect.height / 2).fill()
+                return true
+            }
+        }
         refreshEdge()
     }
 
