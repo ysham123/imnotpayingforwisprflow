@@ -2,11 +2,11 @@
 # Local Dictation installer. Uses only tools included with macOS.
 # This template is rendered with immutable release hashes by make-release.py.
 set -euo pipefail
-release_tag='v1.1.1'
+release_tag='v1.2.0'
 base_url='https://github.com/ysham123/imnotpayingforwisprflow/releases/download/'"$release_tag"
 app_name='Local Dictation.app'
 expected_bundle='dev.yosef.localdictation'
-expected_version='1.1.1'
+expected_version='1.2.0'
 destination="$HOME/Applications"
 assets_dir=''
 replace=0
@@ -107,8 +107,8 @@ while read -r filename expected_hash expected_bytes; do
   printf 'Verified %s\n' "$filename"
   part_paths+=("$part")
 done <<'PARTS'
-Local-Dictation-1.1.1-macos-arm64.tar.part001 9dac1eb55841c19746855d065d6bdd5846ded70108f91e40d72622a9b4102bc4 1800000000
-Local-Dictation-1.1.1-macos-arm64.tar.part002 76fe5b2ce0950a48fbfb6368a456605f1feb2fac8a48aafcf5ffdba25655c28c 1603120640
+Local-Dictation-1.2.0-macos-arm64.tar.part001 084a59235101695677ffef0182e5c42c7230499994905ef46b91c25f109d7fb6 1800000000
+Local-Dictation-1.2.0-macos-arm64.tar.part002 7a135acd424a2a1e0071573b2db3a120697a2450184e076f8b7a4789f27e8163 1603479040
 PARTS
 printf '\nExtracting and verifying the app…\n'
 /bin/cat "${part_paths[@]}" | /usr/bin/tar -xpf - -C "$stage"

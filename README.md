@@ -56,7 +56,7 @@ Download the installer from the pinned release, then run it:
 
 ```bash
 curl --fail --location \
-  https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v1.1.1/install.sh \
+  https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v1.2.0/install.sh \
   --output /tmp/local-dictation-install.sh
 
 # Optional: inspect the script before running it.

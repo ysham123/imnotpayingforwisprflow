@@ -66,10 +66,13 @@ The unchanged real models and cleanup rules passed the same 11 exact text-correc
 
 During release preparation, a source file reported a nonzero size but returned an empty content read in the Documents checkout. The resulting empty installer was caught before publication. Packaging now uses counted reads, source/output verification, required installer markers, and ZIP command-byte/executable checks. Empty and truncated reads are covered by regression tests, and release preparation continues from a local checkout outside Documents. No invalid installer was published.
 
+The final compact-indicator bundle passed the real offline installer on October 4, 2026, in a separate local destination. Both release-part hashes passed, and the installed executable, speech worker, Ollama helper, and Info.plist matched the verified candidate byte for byte. The installed bundle passed strict signature verification and identity/version checks. The temporary test copy was removed afterward; the candidate and release files remain available.
+
+The creator confirmed that the earlier installed v1.2 candidate dictated successfully, then reported that both setup and completion UI stayed visible. The compact-indicator revision addresses that feedback. Its final installed visual check is pending. Desktop-control calls timed out for TextEdit, app inventory, and the installed setup window, so no automated six-app live-compatibility result is claimed.
+
 ### Remaining release gates
 
 - Install and test the candidate's physical Fn and explicit placement flow in real applications.
-- Verify the generated split release through the real offline installer before publishing stable v1.2.
 
 ## v1.1.1 insertion and live checks
 
