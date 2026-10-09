@@ -131,6 +131,37 @@ final class TargetInspector: @unchecked Sendable {
         }, onCancel: { cancellation.cancel() })
     }
 
+    func validateDestination(_ target: TextInserter.Target, cancellation: AXRequestCancellation) async throws {
+        _ = try await destinationRequest(target, restore: false, cancellation: cancellation)
+    }
+
+    func restoreDestination(_ target: TextInserter.Target, cancellation: AXRequestCancellation) async throws -> TextInserter.Target {
+        try await destinationRequest(target, restore: true, cancellation: cancellation)
+    }
+
+    private func destinationRequest(_ target: TextInserter.Target, restore: Bool,
+                                    cancellation: AXRequestCancellation) async throws -> TextInserter.Target {
+        try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            let result: TextInserter.Target = try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    do {
+                        try cancellation.check()
+                        let context = AXInspection(budget: 1.2, cancellation: cancellation)
+                        try context.validateDestination(target)
+                        let result = restore ? try context.restoreDestination(target) : target
+                        try cancellation.check()
+                        continuation.resume(returning: result)
+                    } catch {
+                        continuation.resume(throwing: cancellation.isCancelled ? CancellationError() : error)
+                    }
+                }
+            }
+            try Task.checkCancellation()
+            return result
+        }, onCancel: { cancellation.cancel() })
+    }
+
     func observe(_ target: TextInserter.Target, until deadline: TimeInterval) async -> Observation {
         await withCheckedContinuation { continuation in
             queue.async {
@@ -247,12 +278,15 @@ final class AXInspection {
         let element = editor.element
         let range = selection(of: element)
         let marker = range == nil ? attribute("AXSelectedTextMarkerRange", of: element) : nil
-        let target = TextInserter.Target(processIdentifier: pid, focusedElement: element,
+        var target = TextInserter.Target(processIdentifier: pid, focusedElement: element,
             focusedLeaf: editor.focusedLeaf, role: stringAttribute(kAXRoleAttribute, of: element) ?? "editable",
             selection: range, selectionMarker: marker,
             selectedText: stringAttribute(kAXSelectedTextAttribute, of: element),
             value: stringAttribute(kAXValueAttribute, of: element),
             rangeText: editor.webEditor ? fullRangeText(of: element) : nil, webEditor: editor.webEditor)
+        target.originalWindow = elementAttribute(kAXWindowAttribute, of: element)
+            ?? elementAttribute(kAXWindowAttribute, of: editor.focusedLeaf)
+            ?? elementAttribute(kAXFocusedWindowAttribute, of: AXUIElementCreateApplication(pid))
         let stableMarker = marker.map { expected in
             attribute("AXSelectedTextMarkerRange", of: element).map { CFEqual(expected, $0) } ?? false
         } ?? false
@@ -320,6 +354,80 @@ final class AXInspection {
         guard let leaf = currentFocusedLeaf(in: target.processIdentifier),
               target.focusedLeaf.map({ CFEqual(leaf, $0) }) == true else { throw InsertionError.targetChanged }
         guard !inspectionFailed else { throw InsertionError.unverifiedTarget }
+    }
+
+    /// Validate the saved control without relying on whichever field is now
+    /// focused. Text must remain byte-for-byte unchanged before restoring a
+    /// caret; selection alone is insufficient to prove an unchanged document.
+    func validateDestination(_ target: TextInserter.Target) throws {
+        guard target.preserveDestination, let element = target.focusedElement,
+              let window = target.originalWindow,
+              target.value != nil || target.rangeText != nil,
+              stringAttribute(kAXRoleAttribute, of: window) == kAXWindowRole,
+              belongs(window, to: target.processIdentifier),
+              contained(element, in: window),
+              stringAttribute(kAXRoleAttribute, of: element) == target.role,
+              !isSecure(element),
+              isEditable(element, webEditor: target.webEditor, explicitEditableAncestor: target.webEditor)
+        else { throw InsertionError.targetChanged }
+        if let expected = target.value, stringAttribute(kAXValueAttribute, of: element) != expected {
+            throw InsertionError.targetChanged
+        }
+        if let expected = target.rangeText, fullRangeText(of: element) != expected {
+            throw InsertionError.targetChanged
+        }
+        guard !inspectionFailed, hasTime() else { throw InsertionError.unverifiedTarget }
+    }
+
+    func restoreDestination(_ target: TextInserter.Target) throws -> TextInserter.Target {
+        guard let element = target.focusedElement, let window = target.originalWindow else {
+            throw InsertionError.unverifiedTarget
+        }
+        try requireTime()
+        AXUIElementSetMessagingTimeout(window, timeout)
+        guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
+            throw InsertionError.targetChanged
+        }
+        try requireTime()
+        // Focus exactly the saved editable control, never its coordinates or
+        // the first matching field. An unsupported AX setter leaves text held.
+        if let current = try focusedEditor(in: target.processIdentifier), CFEqual(current.element, element) {
+            // A caret move in the same editor only needs selection restoration.
+        } else {
+            try set(kAXFocusedAttribute, on: element, to: kCFBooleanTrue)
+        }
+        try validateDestination(target)
+        if var range = target.selection, let value = AXValueCreate(.cfRange, &range) {
+            try set(kAXSelectedTextRangeAttribute, on: element, to: value)
+        } else if let marker = target.selectionMarker {
+            try set("AXSelectedTextMarkerRange", on: element, to: marker)
+        } else {
+            throw InsertionError.unverifiedTarget
+        }
+        // Focusing an editable ancestor can change its focused descendant.
+        // Refresh only that leaf after proving the editor itself is identical.
+        guard let editor = try focusedEditor(in: target.processIdentifier), CFEqual(editor.element, element) else {
+            throw InsertionError.targetChanged
+        }
+        var restored = target
+        restored.focusedLeaf = editor.focusedLeaf
+        try validate(restored)
+        try requireTime()
+        return restored
+    }
+
+    private func requireTime() throws {
+        try cancellation?.check()
+        guard hasTime(), !inspectionFailed else { throw InsertionError.unverifiedTarget }
+    }
+
+    private func set(_ name: String, on element: AXUIElement, to value: CFTypeRef) throws {
+        try requireTime()
+        AXUIElementSetMessagingTimeout(element, timeout)
+        guard AXUIElementSetAttributeValue(element, name as CFString, value) == .success else {
+            throw InsertionError.targetChanged
+        }
+        try requireTime()
     }
 
     func fullRangeText(of element: AXUIElement) -> String? {
@@ -446,6 +554,10 @@ final class AXInspection {
 
     func sameWindow(_ element: AXUIElement, app: AXUIElement) -> Bool {
         guard let expected = elementAttribute(kAXFocusedWindowAttribute, of: app) else { return false }
+        return contained(element, in: expected)
+    }
+
+    func contained(_ element: AXUIElement, in expected: AXUIElement) -> Bool {
         if let actual = elementAttribute(kAXWindowAttribute, of: element) { return CFEqual(expected, actual) }
         // Remote WebKit nodes may omit AXWindow. Prove containment by identity
         // in the captured application's focused window. This finds the already

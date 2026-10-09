@@ -1,0 +1,22 @@
+{
+  "tag": "v2.0.0",
+  "version": "2.0.0",
+  "build": "10",
+  "distribution": "thin-dmg",
+  "designated_requirement": "cdhash H\"67750f8b7a1528ae0c94bf06817b21de3441e0cb\"",
+  "model_manifest_sha256": "2aceacd5f0c89973fc1d8cf448a623095681bcc86a5bebc550c833d7744d8ded",
+  "assets": [
+    {
+      "name": "Local-Dictation.dmg",
+      "sha256": "99a3d5eca473403145a188932b4a4d2d00a7c2222ebdd1cc05db91ff7f6d2a8a",
+      "bytes": 12817165
+    }
+  ],
+  "mounted_file_count": 74,
+  "mounted_files_match": true,
+  "strict_signature_verified": true,
+  "installed": true,
+  "published": false,
+  "installed_files_match": true,
+  "installed_strict_signature_verified": true
+}

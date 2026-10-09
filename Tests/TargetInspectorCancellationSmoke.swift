@@ -15,7 +15,9 @@ struct TargetInspectorCancellationSmoke {
             print("PASS queued target captures and validations cancel before AX work")
             try await alreadyCanceledRequest()
             print("PASS already canceled capture does not begin inspection")
-            print("Passed 2 target-inspector cancellation regression groups")
+            try await destinationCancellation()
+            print("PASS input-interrupted and task-canceled restoration skip queued AX mutations")
+            print("Passed 3 target-inspector cancellation regression groups")
         } catch {
             fputs("FAIL \(error)\n", stderr)
             exit(1)
@@ -103,5 +105,35 @@ struct TargetInspectorCancellationSmoke {
         } catch is CancellationError {
             return
         }
+    }
+
+    @MainActor
+    static func destinationCancellation() async throws {
+        let queue = DispatchQueue(label: "localdictation.tests.blocked-restoration")
+        let release = DispatchSemaphore(value: 0)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async { continuation.resume(); release.wait() }
+        }
+        let inspector = TargetInspector(queue: queue)
+        // No element is valid here. Only cancellation can produce the expected
+        // error before the normal original-window guard is reached.
+        let target = TextInserter.Target(processIdentifier: 0, focusedElement: nil,
+            focusedLeaf: nil, role: "unverified", selection: nil, selectionMarker: nil,
+            selectedText: nil, value: nil, rangeText: nil, webEditor: false, preserveDestination: true)
+        let input = AXRequestCancellation(), taskCancellation = AXRequestCancellation()
+        let physical = Task { try await inspector.restoreDestination(target, cancellation: input) }
+        let canceled = Task { try await inspector.restoreDestination(target, cancellation: taskCancellation) }
+        let validation = Task { try await inspector.validateDestination(target, cancellation: input) }
+        try await Task.sleep(nanoseconds: 60_000_000)
+        input.cancel() // Mirrors physical input without canceling the Swift task.
+        canceled.cancel()
+        release.signal()
+        try await requireCancellation(physical)
+        try await requireCancellation(canceled)
+        try await requireCancellation(validation)
+        do {
+            _ = try await inspector.restoreDestination(target, cancellation: AXRequestCancellation())
+            throw Failure(description: "Missing original target was accepted")
+        } catch TextInserter.InsertionError.targetChanged { }
     }
 }

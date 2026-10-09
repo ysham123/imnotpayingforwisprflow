@@ -84,6 +84,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var runtimeInitialized = false
     private var vocabulary = VocabularyPreferences.load()
     private var sessionVocabulary = VocabularySnapshot.empty
+    private var sessionSnapshot = DictationSessionSnapshot(mode: .clean, vocabulary: .empty, inputUID: nil)
+    private final class RetainedRecording {
+        var audio: AudioRecorder.Recording?
+        let snapshot: DictationSessionSnapshot
+        init(_ audio: AudioRecorder.Recording, snapshot: DictationSessionSnapshot) {
+            self.audio = audio; self.snapshot = snapshot
+        }
+    }
+    private var failedRecording: RetainedRecording?
+    private var cleanupTask: Task<CleanupOutcome, Error>?
+    private var rawInFlight: (token: UUID, text: String)?
+    private var originalRequestedFor: UUID?
+    private var captureStarted: TimeInterval?
+    private var processingTimer: Timer?
+    private var sessionNote: String?
+    private var settingsController: SettingsController?
+    private var retryRecordingMenu: NSMenuItem!
+    private var originalMenu: NSMenuItem!
     private var customWordsController: CustomWordsController?
     private var editingVocabulary = false
     private var modelProgress: NSProgressIndicator?
@@ -219,7 +237,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !missing.isEmpty { return "Setup required: " + missing.joined(separator: ", ") }
         if let shortcutFailure { return "Shortcut unavailable · " + shortcutFailure }
         if let listenerFailure { return listenerFailure.localizedDescription }
-        return monitoring ? (correctionReady ? "Ready · \(startInstruction)" : "Ready · correction unavailable or starting") : "Shortcut listener is starting…"
+        return monitoring ? (correctionReady || DictationPreferences.mode == .verbatim ? "Ready · \(DictationPreferences.mode.displayName) · \(startInstruction)" : "Ready · correction unavailable or starting") : "Shortcut listener is starting…"
     }
 
     private func configureMenu() {
@@ -227,7 +245,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         statusMenu = NSMenuItem(title: status, action: nil, keyEquivalent: "")
         menu.addItem(statusMenu); menu.addItem(.separator())
-        let setup = NSMenuItem(title: "Settings…", action: #selector(showSetup), keyEquivalent: "")
+        let setup = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         setup.target = self; menu.addItem(setup)
         let words = NSMenuItem(title: "Custom Words…", action: #selector(showCustomWords), keyEquivalent: "")
         words.target = self; menu.addItem(words)
@@ -237,6 +255,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         cancelMenu.target = self; cancelMenu.isEnabled = false; menu.addItem(cancelMenu)
         discardMenu = NSMenuItem(title: "Discard waiting text", action: #selector(discardPending), keyEquivalent: "")
         discardMenu.target = self; discardMenu.isEnabled = false; menu.addItem(discardMenu)
+        retryRecordingMenu = NSMenuItem(title: "Retry saved recording", action: #selector(retryRecording), keyEquivalent: "")
+        retryRecordingMenu.target = self; retryRecordingMenu.isEnabled = false; menu.addItem(retryRecordingMenu)
+        originalMenu = NSMenuItem(title: "Use original transcript", action: #selector(useOriginal), keyEquivalent: "")
+        originalMenu.target = self; originalMenu.isEnabled = false; menu.addItem(originalMenu)
         let diagnostics = NSMenuItem(title: "Export performance measurements…", action: #selector(exportMetrics), keyEquivalent: "")
         diagnostics.target = self; menu.addItem(diagnostics)
         retryMenu = NSMenuItem(title: "Retry local engines", action: #selector(retryEngines), keyEquivalent: "")
@@ -260,7 +282,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item?.button?.contentTintColor = phase == .listening ? .systemRed : nil
         item?.button?.toolTip = "Local Dictation: \(message)"
         copyMenu?.isEnabled = !copyInProgress && (phase == .idle || phase == .pending) && (state.pendingText != nil || lastText != nil)
-        discardMenu?.isEnabled = phase == .pending
+        discardMenu?.isEnabled = phase == .pending || phase == .failedRecording
+        discardMenu?.title = phase == .failedRecording ? "Discard saved recording" : "Discard waiting text"
+        retryRecordingMenu?.isEnabled = phase == .failedRecording && !suspending && !isTerminating
+        originalMenu?.isEnabled = rawInFlight?.token == session && cleanupTask != nil
         cancelMenu?.isEnabled = phase == .listening || phase == .processing
         retryMenu?.isEnabled = phase == .idle && !suspending
         retryListenerMenu?.isEnabled = !monitoring && phase == .idle && !isTerminating
@@ -391,7 +416,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .idle: hotkey.setPhase(.idle)
         case .listening: hotkey.setPhase(.listening)
         case .pending: hotkey.setPhase(.pending)
-        case .loading, .processing: hotkey.setPhase(.processing)
+        case .loading, .processing, .failedRecording: hotkey.setPhase(.processing)
         }
     }
 
@@ -399,6 +424,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hud.onCancel = { [weak self] in self?.cancelDictation() }
         hud.onCopy = { [weak self] in self?.copyLast() }
         hud.onDiscard = { [weak self] in self?.discardPending() }
+        hud.onRetry = { [weak self] in self?.retryRecording() }
+        hud.onUseOriginal = { [weak self] in self?.useOriginal() }
         recorder.onLevel = { [weak self] level in self?.hud.updateLevel(level) }
         hotkey.onInputActivity = { [weak self] in
             guard let self else { return }
@@ -414,6 +441,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func startDictation() {
         guard !isTerminating else { return }
+        if phase == .failedRecording { showFailedRecording(); return }
         if state.pendingText != nil { showPending(); return }
         guard runtimeInitialized, !editingVocabulary else {
             updateStatus(modelPreparationStatus ?? "Finish local model setup first")
@@ -428,6 +456,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let originalPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let token = state.begin() else { return }
         sessionVocabulary = vocabulary
+        sessionSnapshot = DictationSessionSnapshot(mode: DictationPreferences.mode, vocabulary: vocabulary,
+                                                   inputUID: DictationPreferences.inputUID)
+        sessionNote = nil
+        settingsController?.stopMicrophoneTest()
+        settingsController?.hide()
         setupWindow?.orderOut(nil)
         metrics.begin(token); dismissTask?.cancel()
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
@@ -435,8 +468,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hud.show(.starting, on: screen); metrics.mark("indicatorRequested", token)
         do {
             // Audio starts before any field text or editor ancestry is read.
-            try recorder.start(); metrics.mark("microphoneReady", token)
-            let anchor = originalPID.flatMap { inserter.beginCapture(expectedProcessIdentifier: $0) }
+            try recorder.start(inputUID: sessionSnapshot.inputUID)
+            captureStarted = ProcessInfo.processInfo.systemUptime
+            metrics.mark("microphoneReady", token)
+            let anchor = originalPID.flatMap {
+                inserter.beginCapture(expectedProcessIdentifier: $0, preserveDestination: true)
+            }
             let origin = Task { [inserter] in
                 guard let anchor else { return nil as CGRect? }
                 return await inserter.originWindowFrame(for: anchor)
@@ -463,10 +500,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
-            if !correctionReady { startCorrection() }
+            if sessionSnapshot.mode == .clean && !correctionReady { startCorrection() }
             listeningTimer?.invalidate()
-            listeningTimer = Timer(timeInterval: 115, repeats: false) { [weak self] _ in
-                MainActor.assumeIsolated { self?.finishDictation() }
+            updateRecordingClock(for: token)
+            listeningTimer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateRecordingClock(for: token) }
             }
             RunLoop.main.add(listeningTimer!, forMode: .common)
         } catch {
@@ -476,52 +514,169 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func finishDictation() {
+    private func updateRecordingClock(for token: UUID) {
+        guard token == session, phase == .listening, let captureStarted else { return }
+        let elapsed = RecordingPolicy.elapsed(started: captureStarted, now: ProcessInfo.processInfo.systemUptime)
+        hud.updateRecording(elapsed: elapsed, remaining: RecordingPolicy.maximumDuration - elapsed,
+                            mode: sessionSnapshot.mode.displayName, inputName: recorder.activeInputName,
+                            notice: recorder.inputNotice)
+        if elapsed >= RecordingPolicy.maximumDuration { finishDictation(reason: "Five-minute limit reached") }
+    }
+
+    private func finishDictation(reason: String? = nil) {
         guard phase == .listening else { return }
-        listeningTimer?.invalidate(); listeningTimer = nil
+        listeningTimer?.invalidate(); listeningTimer = nil; captureStarted = nil
         let token = session
-        let vocabularySnapshot = sessionVocabulary
         metrics.mark("stopped", token)
         do {
-            let audio = try recorder.stop()
+            let audio = try recorder.stop(reason: reason)
             guard state.process(token) else { return }
-            syncHotkey(); updateStatus("Transcribing locally…"); hud.show(.transcribing)
-            let capture = targetTask
-            processingTask = Task { [weak self] in
-                guard let self, token == session, !Task.isCancelled else { return }
-                var recoverable: String?
-                do {
-                    let raw = try await transcriber.transcribe(audio.samples, vocabulary: vocabularySnapshot)
-                    guard token == session, !Task.isCancelled else { return }
-                    engineReady = true
-                    customWordsController?.updateRecognitionStatus(overflowIDs: transcriber.lastVocabularyOverflowIDs)
-                    metrics.mark("transcribed", token)
-                    if raw.isEmpty { finishWithoutText("No speech detected", token: token); return }
-                    recoverable = raw
-                    var result = raw, usedOriginal = false
-                    if correctionReady {
-                        updateStatus("Correcting locally…"); hud.show(.correcting)
-                        do { result = try await cleanup.clean(raw, vocabulary: vocabularySnapshot) }
-                        catch { usedOriginal = true }
-                    } else {
-                        usedOriginal = true; startCorrection()
-                    }
-                    guard token == session, !Task.isCancelled else { return }
-                    metrics.mark("corrected", token); recoverable = result
-                    guard let destination = await capture?.value, destination.canInsertAutomatically else {
-                        hold(result, token: token); return
-                    }
-                    try Task.checkCancellation()
-                    guard token == session else { return }
-                    deliver(result, into: destination, token: token,
-                            note: audio.warning ?? (usedOriginal ? "Original transcript used" : nil))
-                } catch {
-                    guard token == session, !Task.isCancelled else { return }
-                    if let recoverable { hold(recoverable, token: token) }
-                    else { finishWithoutText(error.localizedDescription, token: token) }
+            processRecording(RetainedRecording(audio, snapshot: sessionSnapshot), token: token,
+                             capture: targetTask, isRetry: false)
+        } catch { finishWithoutText(error.localizedDescription, token: token) }
+    }
+
+    private func recognize(_ recording: RetainedRecording) async throws -> String {
+        guard let audio = recording.audio else { throw DictationError.message("The recording is no longer available.") }
+        return try await transcriber.transcribe(audio.samples, vocabulary: recording.snapshot.vocabulary)
+    }
+
+    private func processRecording(_ recording: RetainedRecording, token: UUID,
+                                  capture: Task<TextInserter.Target?, Never>?, isRetry: Bool) {
+        let context = recording.snapshot
+        let duration = Double(recording.audio?.samples.count ?? 0) / RecordingPolicy.sampleRate
+        sessionNote = recording.audio?.warning
+        metrics.recording(mode: context.mode.rawValue, duration: duration, retry: isRetry, token)
+        syncHotkey(); updateStatus("Transcribing locally…"); hud.show(.transcribing)
+        let processingBegan = ProcessInfo.processInfo.systemUptime
+        processingTimer?.invalidate()
+        processingTimer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.session == token, self.hud.state == .transcribing else { return }
+                self.hud.updateProcessingDetail("On your Mac · " + RecordingPolicy.clock(ProcessInfo.processInfo.systemUptime - processingBegan))
+            }
+        }
+        RunLoop.main.add(processingTimer!, forMode: .common)
+        processingTask = Task { [weak self] in
+            guard let self, token == session, !Task.isCancelled else { return }
+            defer {
+                if token == session {
+                    processingTimer?.invalidate(); processingTimer = nil
+                    rawInFlight = nil; originalRequestedFor = nil; cleanupTask = nil
+                    hud.allowsOriginal = false; originalMenu?.isEnabled = false
                 }
             }
-        } catch { finishWithoutText(error.localizedDescription, token: token) }
+            do {
+                let raw = try await recognize(recording)
+                guard token == session, !Task.isCancelled else { return }
+                recording.audio = nil; failedRecording = nil; state.recognized(token)
+                engineReady = true
+                customWordsController?.updateRecognitionStatus(overflowIDs: transcriber.lastVocabularyOverflowIDs)
+                metrics.mark("transcribed", token)
+                if raw.isEmpty { finishWithoutText("No speech detected", token: token); return }
+                var result = raw
+                if context.mode == .clean && correctionReady {
+                    let generation = correctionGeneration
+                    rawInFlight = (token, raw); originalRequestedFor = nil
+                    hud.allowsOriginal = true
+                    let coordinator = CleanupCoordinator(client: cleanup)
+                    cleanupTask = Task {
+                        try await coordinator.clean(raw, vocabulary: context.vocabulary) { [weak self] completed, total in
+                            Task { @MainActor [weak self] in
+                                guard let self, self.session == token, self.originalRequestedFor != token,
+                                      self.rawInFlight?.token == token else { return }
+                                self.hud.updateProcessingDetail("Cleaning \(completed) of \(total)")
+                            }
+                        }
+                    }
+                    updateStatus("Cleaning locally…"); hud.show(.correcting)
+                    do {
+                        let outcome = try await cleanupTask!.value
+                        guard token == session, !Task.isCancelled else { return }
+                        if originalRequestedFor == token {
+                            result = raw; sessionNote = combinedNote(sessionNote, "Original transcript used")
+                            metrics.cleanup(completed: 0, total: 0, fallbacks: ["originalRequested"], token)
+                        } else {
+                            result = outcome.text
+                            metrics.cleanup(completed: outcome.completedChunks, total: outcome.totalChunks,
+                                            fallbacks: outcome.fallbackReasons, token)
+                            if !outcome.fallbackReasons.isEmpty {
+                                sessionNote = combinedNote(sessionNote, "Some text kept as dictated")
+                            }
+                            if outcome.fallbackReasons.contains("serviceUnavailable"), generation == correctionGeneration,
+                               !isTerminating, !suspending {
+                                correctionReady = false
+                                correctionStatus = "Correction unavailable; original transcript will be used"
+                                if !releaseEnginesWhenIdle { startCorrection() }
+                                updateSetupStatus()
+                            }
+                        }
+                    } catch {
+                        guard token == session, !Task.isCancelled else { return }
+                        sessionNote = combinedNote(sessionNote, "Original transcript used")
+                        metrics.cleanup(completed: 0, total: 0,
+                                        fallbacks: [originalRequestedFor == token ? "originalRequested" : "service"], token)
+                        if originalRequestedFor != token, !isTerminating, !suspending,
+                           generation == correctionGeneration, LocalCorrectionService.shouldRecover(after: error) {
+                            correctionReady = false
+                            correctionStatus = "Correction unavailable; original transcript will be used"
+                            if !releaseEnginesWhenIdle { startCorrection() }
+                            updateSetupStatus()
+                        }
+                    }
+                    cleanupTask = nil; rawInFlight = nil; hud.allowsOriginal = false; originalMenu?.isEnabled = false
+                } else if context.mode == .clean {
+                    sessionNote = combinedNote(sessionNote, "Original transcript used")
+                    metrics.cleanup(completed: 0, total: 0, fallbacks: ["unavailable"], token)
+                    if !releaseEnginesWhenIdle { startCorrection() }
+                }
+                guard token == session, !Task.isCancelled else { return }
+                metrics.mark("corrected", token)
+                guard !isRetry, let destination = await capture?.value, destination.canInsertAutomatically else {
+                    hold(result, token: token); return
+                }
+                guard token == session, !Task.isCancelled else { return }
+                deliver(result, into: destination, token: token, note: sessionNote)
+            } catch {
+                guard token == session, !Task.isCancelled else { return }
+                engineReady = false
+                guard recording.audio != nil, state.failRecording(token) else {
+                    finishWithoutText(error.localizedDescription, token: token); return
+                }
+                failedRecording = recording; processingTask = nil; targetTask?.cancel(); targetTask = nil
+                metrics.finish("recordingRetained", token)
+                showFailedRecording(error.localizedDescription)
+                suspendEnginesIfIdle()
+            }
+        }
+    }
+
+    private func combinedNote(_ left: String?, _ right: String) -> String {
+        left.map { $0 + " · " + right } ?? right
+    }
+
+    private func showFailedRecording(_ message: String? = nil) {
+        guard failedRecording?.audio != nil, phase == .failedRecording else { return }
+        dismissTask?.cancel(); recoveryNeeded = true; syncHotkey()
+        updateStatus("Recording saved · Retry without speaking again")
+        hud.show(.failedRecording, message: message ?? "Retry without speaking again")
+    }
+
+    @objc private func retryRecording() {
+        guard !isTerminating, !suspending, let recording = failedRecording,
+              let token = state.beginRetry() else { return }
+        settingsController?.stopMicrophoneTest(); settingsController?.hide(); setupWindow?.orderOut(nil)
+        sessionSnapshot = recording.snapshot
+        metrics.begin(token); metrics.mark("stopped", token)
+        hud.beginSession(token, fallbackScreen: DictationHUD.activeScreen)
+        processRecording(recording, token: token, capture: nil, isRetry: true)
+    }
+
+    @objc private func useOriginal() {
+        guard rawInFlight?.token == session, phase == .processing, cleanupTask != nil else { return }
+        originalRequestedFor = session; cleanupTask?.cancel()
+        originalMenu?.isEnabled = false
+        hud.updateProcessingDetail("Using original transcript…")
     }
 
     private func hold(_ text: String, token: UUID) {
@@ -535,7 +690,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard state.pendingText != nil else { return }
         dismissTask?.cancel(); syncHotkey()
         updateStatus(message ?? "Text ready · click a text box, then \(placementInstruction)")
-        hud.show(.ready, message: message)
+        hud.show(.ready, message: message ?? sessionNote.map { $0 + " · " + placementInstruction })
     }
 
     private func placePending() {
@@ -559,7 +714,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                   token == session, !Task.isCancelled else {
                 if token == session { hold(text, token: token) }; return
             }
-            deliver(text, into: destination, token: token, note: nil)
+            deliver(text, into: destination, token: token, note: sessionNote)
         }
     }
 
@@ -635,10 +790,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !isTerminating, phase == .listening || phase == .processing else { return }
         let canceled = session
         processingTask?.cancel(); processingTask = nil; targetTask?.cancel(); targetTask = nil
+        cleanupTask?.cancel(); cleanupTask = nil; rawInFlight = nil; originalRequestedFor = nil
+        processingTimer?.invalidate(); processingTimer = nil; captureStarted = nil
         state.cancel(); engineGeneration &+= 1; engineReady = false; transcriber.cancel()
         listeningTimer?.invalidate(); listeningTimer = nil; recorder.cancel()
         metrics.finish("canceled", canceled); syncHotkey()
-        if state.pendingText != nil { showPending() }
+        if phase == .failedRecording { showFailedRecording() }
+        else if state.pendingText != nil { showPending() }
         else { updateStatus("Canceled · \(startInstruction) when ready"); hud.hide() }
         if releaseEnginesWhenIdle { suspendEnginesIfIdle() }
         else {
@@ -684,6 +842,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func discardPending() {
+        if phase == .failedRecording, !isTerminating {
+            failedRecording?.audio = nil; failedRecording = nil; state.discardRecording()
+            sessionNote = nil; recoveryNeeded = false
+            syncHotkey(); hud.hide(); updateStatus(permissionStatus); suspendEnginesIfIdle()
+            return
+        }
         guard !isTerminating, phase == .pending else { return }
         state.resolvePending(copied: false); recoveryNeeded = false
         syncHotkey(); hud.hide(); updateStatus(permissionStatus); suspendEnginesIfIdle()
@@ -737,7 +901,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func suspendEnginesIfIdle() {
-        guard releaseEnginesWhenIdle, !suspending, phase == .idle || phase == .pending || phase == .loading else { return }
+        guard releaseEnginesWhenIdle, !suspending, phase == .idle || phase == .pending || phase == .loading || phase == .failedRecording else { return }
         guard engineReady || correctionReady || correctionTask != nil || phase == .loading else { return }
         suspending = true; engineReady = false; correctionReady = false
         engineGeneration &+= 1; correctionGeneration &+= 1
@@ -758,6 +922,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if isTerminating { return .terminateLater }
+        if failedRecording?.audio != nil {
+            let alert = NSAlert()
+            alert.messageText = "Discard your saved recording?"
+            alert.informativeText = "This recording is held only in memory. Retry it before quitting to recover your words."
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Discard and Quit")
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        }
         var copyOnQuit: String?
         if state.pendingText != nil {
             let alert = NSAlert()
@@ -807,6 +979,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pressureSource?.cancel()
         for observer in lifecycleObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         processingTask?.cancel(); targetTask?.cancel(); correctionTask?.cancel(); modelPreparationTask?.cancel()
+        cleanupTask?.cancel(); processingTimer?.invalidate(); settingsController?.stopMicrophoneTest()
+        failedRecording?.audio = nil; failedRecording = nil; rawInFlight = nil
         recorder.cancel(); transcriber?.shutdown(); correctionService?.stop()
     }
 
@@ -837,7 +1011,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func changeShortcut() {
         guard phase == .idle, !recordingShortcut, !copyInProgress, !isTerminating,
-              let window = setupWindow else { return }
+              let window = settingsController?.window.isVisible == true ? settingsController?.window : setupWindow else { return }
         recordingShortcut = true
         hotkey.stop(); monitoring = false
         updateStatus("Choosing a shortcut · Escape to cancel")
@@ -878,6 +1052,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateShortcutAppearance()
         refreshPermissions()
         if shortcutFailure != nil { updateStatus(permissionStatus) }
+    }
+
+    @objc private func showSettings() {
+        if settingsController == nil {
+            settingsController = SettingsController(actions: .init(
+                changeShortcut: { [weak self] in self?.changeShortcut() },
+                resetShortcut: { [weak self] in self?.resetShortcut() },
+                customWords: { [weak self] in self?.showCustomWords() },
+                setup: { [weak self] in self?.showSetup() },
+                retryEngines: { [weak self] in self?.retryEngines() },
+                retryListener: { [weak self] in self?.retryListener() },
+                exportMetrics: { [weak self] in self?.exportMetrics() },
+                exportPermissions: { [weak self] in self?.exportPermissionDiagnostics() },
+                preferencesChanged: { [weak self] in
+                    guard let self else { return }
+                    if self.phase == .idle { self.updateStatus(self.permissionStatus) }
+                    else { self.updateSetupStatus() }
+                }))
+        }
+        updateSetupStatus(); settingsController?.show()
     }
 
     @objc private func showSetup() {
@@ -961,6 +1155,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateSetupStatus() {
         let canChange = phase == .idle && !recordingShortcut && !editingVocabulary && !copyInProgress && !isTerminating
+        settingsController?.update(.init(status: status, shortcutDisplay: shortcutConfiguration.displayName,
+            usesFn: usesFn, canChangeControls: canChange, readiness: correctionStatus,
+            setupNeeded: !allPermissions || !runtimeInitialized || !monitoring, vocabularyCount: vocabulary.entries.count))
         shortcutChangeButton?.isEnabled = canChange
         shortcutResetButton?.isEnabled = canChange && shortcutConfiguration != .fn
         let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized

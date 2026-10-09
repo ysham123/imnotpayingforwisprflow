@@ -1,4 +1,5 @@
 #include "whisper.h"
+#include "audio-activity.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -38,7 +39,7 @@ int main(int argc, char **argv) {
         uint32_t count = 0;
         std::cin.read(reinterpret_cast<char *>(&count), sizeof(count));
         if (!std::cin || count == 0) break;
-        if (count > 16000u * 120u) break;
+        if (count > dictation_audio::maximum_samples) break;
         uint32_t hints = 0;
         std::cin.read(reinterpret_cast<char *>(&hints), sizeof(hints));
         if (!std::cin || hints > 100) break;
@@ -72,13 +73,8 @@ int main(int argc, char **argv) {
         std::string status = ",\"vocabulary_overflow\":[";
         for (size_t i = 0; i < overflow.size(); ++i) { if (i) status += ","; status += json_string(overflow[i]); }
         status += "]";
-        double energy = 0;
-        for (float &sample : audio) {
-            if (!std::isfinite(sample)) sample = 0;
-            sample = std::clamp(sample, -1.0f, 1.0f);
-            energy += static_cast<double>(sample) * sample;
-        }
-        if (count < 4000 || std::sqrt(energy / count) < 0.0015) {
+        const auto activity = dictation_audio::prepare(audio);
+        if (count < 4000 || !activity.has_speech) {
             std::cout << "{\"text\":\"\"" << status << "}\n" << std::flush;
             continue;
         }
@@ -99,7 +95,7 @@ int main(int argc, char **argv) {
         params.suppress_blank = true;
         params.suppress_nst = true;
         params.temperature = 0.0f;
-        if (whisper_full(ctx, params, audio.data(), count) != 0) {
+        if (whisper_full(ctx, params, audio.data() + activity.begin, static_cast<int>(activity.size())) != 0) {
             std::cout << "{\"error\":\"Speech recognition failed\"}\n" << std::flush;
             continue;
         }

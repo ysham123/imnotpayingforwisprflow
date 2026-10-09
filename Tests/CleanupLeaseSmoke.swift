@@ -60,6 +60,13 @@ import Foundation
         try await clean()
         try require(counts()["tags"] == 8, "Stopped lease retained cache")
         try require(counts()["temporary"] == 3, "Unowned requests retained model indefinitely")
-        print("Passed 9 owned-service metadata/retention regressions")
+        try "delayed".write(to: root.appendingPathComponent("mode"), atomically: true, encoding: .utf8)
+        let started = ProcessInfo.processInfo.systemUptime
+        do {
+            _ = try await client.clean("Hello.", timeout: 0.05)
+            fatalError("A response beyond the caller's cleanup budget was accepted")
+        } catch CleanupError.timedOut { }
+        require(ProcessInfo.processInfo.systemUptime - started < 1, "Caller timeout did not cancel the HTTP operation")
+        print("Passed 10 owned-service metadata/retention/deadline regressions")
     }
 }

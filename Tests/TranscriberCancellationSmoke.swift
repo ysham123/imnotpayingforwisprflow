@@ -6,6 +6,16 @@ import Foundation
         let log = resources.appendingPathComponent("Models/ggml-large-v3-turbo-q8_0.bin.log")
         let engine = WhisperTranscriber(resources: resources)
         defer { engine.shutdown() }
+        precondition(engine.requestTimeout(sampleCount: 1_920_000) == 120)
+        precondition(engine.requestTimeout(sampleCount: 1_920_001) == 180)
+        let override = WhisperTranscriber(resources: resources, requestTimeout: 0.7)
+        precondition(override.requestTimeout(sampleCount: 4_800_000) == 0.7)
+        defer { override.shutdown() }
+        for invalid in [[], [Float](repeating: 0, count: 4_800_001)] {
+            do { _ = try await engine.transcribe(invalid); fatalError("Invalid sample count accepted") }
+            catch is DictationError { }
+        }
+        precondition(!FileManager.default.fileExists(atPath: log.path), "Invalid audio started a worker")
 
         let preCanceled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
@@ -57,7 +67,9 @@ import Foundation
         let afterStalePreparation = try await engine.transcribe([0.6])
         precondition(afterStalePreparation == "recognized speech")
         precondition(engine.lastTiming != nil)
-        print("Passed 6 cancellation/recovery scenarios, including suspend/rewarm and stale preparation")
+        let fullLength = try await engine.transcribe([Float](repeating: 0.1, count: 4_800_000))
+        precondition(fullLength == "recognized speech")
+        print("Passed 9 cancellation/recovery, five-minute boundary, and duration-based timeout scenarios")
     }
 
     static func waitFor(_ text: String, in log: URL) async throws {

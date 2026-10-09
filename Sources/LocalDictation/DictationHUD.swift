@@ -6,7 +6,7 @@ import AppKit
 final class DictationHUD {
     enum State: Equatable {
         case starting, listening, transcribing, correcting, inserting
-        case ready, inserted, pasteSent, error
+        case ready, inserted, pasteSent, error, failedRecording
 
         var title: String {
             switch self {
@@ -19,6 +19,7 @@ final class DictationHUD {
             case .inserted: return "Inserted"
             case .pasteSent: return "Paste sent"
             case .error: return "Needs attention"
+            case .failedRecording: return "Recording saved"
             }
         }
 
@@ -32,6 +33,7 @@ final class DictationHUD {
             case .inserted: return ""
             case .pasteSent: return "Check your text box"
             case .error: return "Open the microphone menu for details"
+            case .failedRecording: return "Retry without speaking again"
             }
         }
 
@@ -45,6 +47,7 @@ final class DictationHUD {
             case .inserted: return "checkmark"
             case .pasteSent: return "arrow.up.right"
             case .error: return "exclamationmark.circle"
+            case .failedRecording: return "waveform.badge.exclamationmark"
             }
         }
     }
@@ -52,6 +55,9 @@ final class DictationHUD {
     var onCancel: (() -> Void)?
     var onCopy: (() -> Void)?
     var onDiscard: (() -> Void)?
+    var onRetry: (() -> Void)?
+    var onUseOriginal: (() -> Void)?
+    var allowsOriginal = false
     var finishInstruction = "Tap Fn to finish"
     var placementInstruction = "Click a text box · tap Fn"
 
@@ -64,6 +70,9 @@ final class DictationHUD {
     private let cancelButton = PassiveButton(title: "Cancel", target: nil, action: nil)
     private let copyButton = PassiveButton(title: "Copy", target: nil, action: nil)
     private let discardButton = PassiveButton(title: "Discard", target: nil, action: nil)
+    private let retryButton = PassiveButton(title: "Retry", target: nil, action: nil)
+    private let originalButton = PassiveButton(title: "Use original", target: nil, action: nil)
+    private var countdownAnnounced = false
     private var displayID: NSNumber?
     private(set) var sessionID: UUID?
     private var originPinned = false
@@ -137,13 +146,13 @@ final class DictationHUD {
             graphic.heightAnchor.constraint(equalToConstant: 20)
         ])
 
-        let buttons = NSStackView(views: [cancelButton, copyButton, discardButton])
+        let buttons = NSStackView(views: [originalButton, retryButton, cancelButton, copyButton, discardButton])
         buttons.spacing = 8
         buttons.alignment = .centerY
         buttons.translatesAutoresizingMaskIntoConstraints = false
         cancelButton.isCloseAction = true
         discardButton.isQuietAction = true
-        for button in [cancelButton, copyButton, discardButton] {
+        for button in [cancelButton, copyButton, discardButton, retryButton, originalButton] {
             button.target = self
             button.bezelStyle = .inline
             button.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -161,6 +170,12 @@ final class DictationHUD {
         discardButton.action = #selector(discard)
         discardButton.identifier = .init("dictation-discard")
         discardButton.setAccessibilityLabel("Discard waiting text")
+        retryButton.action = #selector(retry)
+        retryButton.identifier = .init("dictation-retry")
+        retryButton.setAccessibilityLabel("Retry saved recording")
+        originalButton.action = #selector(useOriginal)
+        originalButton.identifier = .init("dictation-original")
+        originalButton.setAccessibilityLabel("Use original transcript")
 
         content.addSubview(graphic)
         content.addSubview(labels)
@@ -257,6 +272,7 @@ final class DictationHUD {
         let previousState = self.state
         let previousDetail = detail.stringValue
         self.state = state
+        if previousState != .listening && state == .listening { countdownAnnounced = false }
         if let screen { displayID = Self.id(of: screen) }
         if displayID == nil { displayID = Self.id(of: Self.activeScreen) }
         title.stringValue = state.title
@@ -279,8 +295,11 @@ final class DictationHUD {
         if state != .listening { meter.level = 0 }
         cancelButton.isHidden = ![.starting, .listening, .transcribing, .correcting, .inserting].contains(state)
         copyButton.isHidden = ![.ready, .pasteSent].contains(state)
-        discardButton.isHidden = state != .ready
-        let visibleButtons = [cancelButton, copyButton, discardButton].filter { !$0.isHidden }
+        discardButton.isHidden = state != .ready && state != .failedRecording
+        discardButton.setAccessibilityLabel(state == .failedRecording ? "Discard saved recording" : "Discard waiting text")
+        retryButton.isHidden = state != .failedRecording
+        originalButton.isHidden = state != .correcting || !allowsOriginal
+        let visibleButtons = [cancelButton, copyButton, discardButton, retryButton, originalButton].filter { !$0.isHidden }
         actionsWidth.constant = visibleButtons.reduce(0) { $0 + $1.intrinsicContentSize.width }
             + CGFloat(max(0, visibleButtons.count - 1)) * 8
         let size: NSSize
@@ -289,6 +308,9 @@ final class DictationHUD {
         case .inserted: size = guidance.isEmpty ? NSSize(width: 168, height: 44) : NSSize(width: 324, height: 56)
         case .pasteSent: size = NSSize(width: message == nil ? 276 : 372, height: message == nil ? 52 : 56)
         case .error: size = NSSize(width: 380, height: 56)
+        case .failedRecording: size = NSSize(width: 400, height: 56)
+        case .correcting: size = NSSize(width: allowsOriginal ? 400 : 268, height: 56)
+        case .listening: size = NSSize(width: 340, height: 56)
         default: size = NSSize(width: 268, height: 48)
         }
         panel.setContentSize(size)
@@ -306,10 +328,35 @@ final class DictationHUD {
         meter.level = rms.isFinite ? min(1, max(0, rms)) : 0
     }
 
+    /// Timer updates are silent to assistive technology; announce the warning once.
+    func updateRecording(elapsed: TimeInterval, remaining: TimeInterval, mode: String,
+                         inputName: String?, notice: String?) {
+        guard state == .listening else { return }
+        let seconds = max(0, Int(elapsed))
+        title.stringValue = String(format: "Listening · %d:%02d", seconds / 60, seconds % 60)
+        if remaining <= 15 {
+            detail.stringValue = "Finishing in \(max(0, Int(ceil(remaining)))) seconds · \(finishInstruction)"
+            if !countdownAnnounced {
+                countdownAnnounced = true
+                announce("Fifteen seconds remaining. Dictation will finish automatically.")
+            }
+        } else {
+            detail.stringValue = notice == nil ? "\(mode) · \(finishInstruction)" : "Mic unavailable · using default"
+        }
+        panel.contentView?.toolTip = [inputName, notice].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    func updateProcessingDetail(_ message: String) {
+        guard state == .transcribing || state == .correcting else { return }
+        detail.stringValue = message
+    }
+
     func hide() {
         state = nil
         sessionID = nil
         originPinned = false
+        countdownAnnounced = false
+        allowsOriginal = false
         panel.orderOut(nil)
         meter.level = 0
     }
@@ -335,6 +382,8 @@ final class DictationHUD {
     @objc private func cancel() { onCancel?() }
     @objc private func copy() { onCopy?() }
     @objc private func discard() { onDiscard?() }
+    @objc private func retry() { onRetry?() }
+    @objc private func useOriginal() { onUseOriginal?() }
 }
 
 private final class CapsuleSurface: NSVisualEffectView {

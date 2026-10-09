@@ -28,7 +28,7 @@ bash Scripts/build.sh "$HOME/Library/Caches/LocalDictation-build/Local Dictation
 
 python3 Scripts/make-release.py \
   "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app" \
-  "$HOME/Library/Caches/LocalDictation-release" --tag v1.3.0
+  "$HOME/Library/Caches/LocalDictation-release" --tag v2.0.0
 ```
 
 Choose an empty release directory. The output contains `Local-Dictation.dmg`, model/release manifests, and SHA256SUMS. DMG creation copies the already-signed bundle without re-signing. Installation also preserves that signature. Finalize every executable/resource before signing.
@@ -40,6 +40,16 @@ For development, invoke `Scripts/package_app.py` with `--development` to use `de
 Current releases use ad-hoc signing. Non-ad-hoc builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
 
 The isolated free self-signed experiment could not establish a system-trusted signing identity without trust changes. It does not demonstrate recipient TCC grant retention. Self-signing is therefore not adopted for distribution; ad-hoc updates may still require permission renewal. No Apple notarization, automatic updater, or trust import is included.
+
+For repeated permission setup, first run `python3 Scripts/diagnose-permissions.py`
+against the unchanged installation. It separates observed changed-build gaps,
+unchanged relaunches, and listener failures using bounded local records. A
+creator-only local signing route is documented in [LOCAL-SIGNING.md](LOCAL-SIGNING.md).
+Its explicitly approved scoped trust entry and installed build passed
+signature checks. One unchanged-build quit/reopen retained microphone,
+Accessibility, and Input Monitoring grants and the active listener. Retention
+across a later signed build update has not been tested. It does not change the
+public-release signing policy.
 
 ## Run regression checks
 
@@ -56,9 +66,12 @@ bash Scripts/test-native-vocabulary-worker.sh
 bash Scripts/test-runtime-setup.sh
 bash Scripts/test-target-inspector.sh
 bash Scripts/test-cleanup.sh
+bash Scripts/test-cleanup-coordinator.sh
+bash Scripts/test-settings.sh
 bash Scripts/test-cleanup-service.sh
 bash Scripts/test-correction-lifecycle.sh
 bash Scripts/test-audio.sh
+bash Scripts/test-native-audio.sh
 bash Scripts/test-transcriber.sh
 bash Scripts/test-worker-faults.sh
 python3 Tests/PackagingSmoke.py
@@ -98,7 +111,7 @@ Diagnostics resolve external installed models through RuntimePaths and check mod
 
 Fn / Globe remains the default: double-tap starts recording, one tap stops, and one tap places waiting text after the double-tap window. A double-tap while text is waiting asks the user to resolve it rather than starting a new recording.
 
-**Settings… → Dictation shortcut → Change…** records a custom key combination. Command, Control, or Option plus a key is accepted, with optional Shift. F1–F20 can also be used without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts are rejected. Escape or switching to another app cancels recording the shortcut. One custom press starts, stops, or places waiting text according to the session phase. Held-key repeats and rapid duplicate presses are ignored. Custom mode disables Fn dictation actions; **Use Fn / Globe** restores the default gesture. Settings, menu status, and placement guidance use the selected shortcut.
+**Settings… → Shortcuts → Change shortcut…** records a custom key combination. Command, Control, or Option plus a key is accepted, with optional Shift. F1–F20 can also be used without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts are rejected. Escape or switching to another app cancels recording the shortcut. One custom press starts, stops, or places waiting text according to the session phase. Held-key repeats and rapid duplicate presses are ignored. Custom mode disables Fn dictation actions; **Use Fn / Globe** restores the default gesture. Settings, menu status, and placement guidance use the selected shortcut.
 
 `HotkeyPreferences.swift` stores the selected `ShortcutConfiguration` as JSON in local `UserDefaults` under `dictation.shortcut.v1`. Registration uses the physical virtual key code and Carbon modifier bits; the display label is presentation only. Invalid stored configurations fall back to Fn / Globe. A valid saved shortcut that cannot be registered is reported as unavailable rather than silently replaced with Fn.
 
@@ -108,7 +121,30 @@ Fn / Globe remains the default: double-tap starts recording, one tap stops, and 
 
 ## Measure performance
 
-The menu action **Export performance measurements…** saves numeric timing and outcome data from the last 100 sessions in memory. It includes microphone readiness, transcription/correction completion, paste dispatch, first observed insertion, and readiness for another capture when each stage is available. It excludes dictated text, audio, and application names. A dispatched paste and a verified visible insertion are separate measurements.
+The menu action **Export performance measurements…** saves numeric timing and outcome data from the last 100 sessions in memory. It includes microphone readiness, transcription/correction completion, paste dispatch, first observed insertion, and readiness for another capture when each stage is available. Schema version 2 also records mode, audio duration, retry state, and bounded cleanup counts/fallback categories. It excludes dictated text, audio, microphone names, and application names. A dispatched paste and a verified visible insertion are separate measurements.
+
+For a paired 2.0 comparison, `Scripts/benchmark-upgrade.sh` compiles the current source and a preserved 1.3-compatible source tree. The baseline defaults to `.test-build/v2-baseline`; supply another tree as the third compile-only argument or through `LOCAL_DICTATION_UPGRADE_BASELINE` when running. Compile first without starting models or generating speech:
+
+```bash
+bash Scripts/benchmark-upgrade.sh --compile-only /tmp/localdictation-upgrade-benchmark
+```
+
+After quitting the normal app and acquiring an exclusive model window, provide the **old and new native runtime resources separately**, along with the shared model directory:
+
+```bash
+LOCAL_DICTATION_UPGRADE_BUILD_DIR=/tmp/localdictation-upgrade-benchmark \
+bash Scripts/benchmark-upgrade.sh --run \
+  "/path/to/previous/Local Dictation.app/Contents/Resources" \
+  "/path/to/candidate/Local Dictation.app/Contents/Resources" \
+  "$HOME/Library/Application Support/Local Dictation/Models" \
+  .test-build/v2-upgrade-fixtures /tmp/localdictation-upgrade-results 20 5 all
+```
+
+The run generates WAVs solely from public synthetic text in `Tests/UpgradeFixtures.json`, using the installed Samantha voice. It never records a microphone. `python3 Scripts/generate-upgrade-fixtures.py .test-build/v2-upgrade-fixtures` can prepare those files separately; `--validate-only` checks recipes without generating speech. Both builds receive the same hashed audio. The generator adjusts speaking rate without cropping words and rejects empty synthesis output. It records speech, explicit-pause, and padding durations; remaining padding goes between passages or before a single passage, so speech reaches the end of long fixtures.
+
+Cases are `101` (short), `130` (30 seconds), `220` (120 seconds), `500` (300 seconds), and `221` (120 seconds with three 15-second pauses). Replace `all` with comma-separated IDs to run a subset. The baseline reports 300 seconds as unsupported. Each supported case runs Clean and Verbatim, with 20 warm short repetitions and five longer repetitions by default; build order alternates across cases and mode order alternates across repetitions. Each block warms its models before timing and stops its owned engines afterward.
+
+Per-case reports and `paired-report.json` contain stage timings, source/worker/audio hashes, cleanup fallback categories, and exact-count marker checks for amounts, identifiers, negation, vocabulary, and canonical phrases. These synthetic checks do not establish recognition accuracy or semantic equivalence. Warm timings exclude microphone startup and editor delivery. Percentiles use nearest rank; with five successful samples, p95 is the observed maximum. Failed samples remain in the report and are excluded from successful-request latency summaries.
 
 Run backend benchmarks with a synthetic audio fixture after quitting the normal app:
 
@@ -150,9 +186,10 @@ For explicit production model-storage integration, `Scripts/test-production-mode
 | `DictationHUD.swift` + `InteractionMetrics.swift` | Nonactivating status panel and content-free local timing export |
 | `FnHotkey.swift` | Input activity event tap, Fn/Globe gestures, and custom Carbon hotkey registration |
 | `ShortcutRecorder.swift` + `HotkeyPreferences.swift` | Shortcut capture and local preference persistence |
-| `AudioRecorder.swift` | Capture, resampling, bounded memory, interruption recovery |
+| `AudioRecorder.swift` + `AudioInputProvider.swift` | Per-app input selection, capture, resampling, five-minute bound, interruption recovery |
+| `SettingsController.swift` + `DictationPreferences.swift` | Five native settings sections, mode/input preferences, microphone preview, OS login status |
 | `WhisperTranscriber.swift` + `Native/whisper-worker.cpp` | Persistent local speech worker, framed audio IPC, cancellation |
-| `LocalCorrectionService.swift` + `CleanupClient.swift` | Bundled Ollama lifecycle, cleanup request, conservative validation |
+| `LocalCorrectionService.swift` + `CleanupClient.swift` + `CleanupCoordinator.swift` | Bundled Ollama lifecycle, bounded passage cleanup, protected-content validation |
 | `TargetInspector.swift` | Pinned field identity, serialized Accessibility inspection, focus and caret validation |
 | `TextInserter.swift` + `DeliveryCoordinator.swift` | Validated paste delivery, serialized clipboard leases, insertion observation, and restoration |
 | `Tests/` | Gesture, cleanup, audio, worker, insertion, and packaging regressions |
@@ -165,8 +202,12 @@ For explicit production model-storage integration, `Scripts/test-production-mode
 
 Use the thin-app/DMG packaging command above only after the installed app passes its checks. Record unchanged relaunches separately from changed-build updates; macOS privacy grants may behave differently. Test the actual DMG and production installation transaction, not only mocked rollback cases.
 
-Upload all assets to one matching tag only after installed-app testing and the published validation record are complete. The v1.2 scripts under `Distribution/` are historical compatibility tools; the v1.3 primary installer is the native app in the DMG. Model weights, app bundles, signing keys, caches, and audio fixtures stay outside Git. Retain third-party licenses when changing the runtime.
+Upload all assets to one matching tag only after installed-app testing and the published validation record are complete. The v1.2 scripts under `Distribution/` are historical compatibility tools; the primary installer is the native app in the DMG. Model weights, app bundles, signing keys, caches, and audio fixtures stay outside Git. Retain third-party licenses when changing the runtime.
 
 ## Contribution scope
 
-Keep the product focused on dictation. Useful contributions include editor compatibility, reliable input-device recovery, regression cases for spoken corrections, and simpler signed installation. Preserve raw speech-to-text output when cleanup fails. A successful paste event is not proof that an editor inserted text; maintain the distinction in status messages and tests.
+Keep the default dictation path fast and local. The proposed next major release adds explicit agent and research modes; see [the product roadmap](PRODUCT-ROADMAP.md). Useful contributions also include editor compatibility, reliable input-device recovery, regression cases for spoken corrections, and simpler signed installation. Preserve raw speech-to-text output when cleanup fails. A successful paste event is not proof that an editor inserted text; maintain the distinction in status messages and tests.
+
+The 2.0.1 recording path opts into original-destination restoration after strict initial capture. `DestinationRestoration` orders current-field validation, unchanged-origin validation, activation, exact-element focus/selection restoration, and final validation. Historical clicks and focus events no longer invalidate a completed pinned capture. A separate physical-input epoch and cancellation flag stop an interrupted delivery. Explicit placement uses the existing strict capture policy. AX work remains on the inspector queue with request budgets; clipboard ownership and exactly-one paste dispatch remain on the main actor.
+
+Run `bash Scripts/test-destination-restoration.sh` and `bash Scripts/test-target-inspector.sh` for headless ordering/cancellation coverage. `bash Scripts/test-insertion.sh .test-build/insertion --compile-only` compiles the native fixture, including the four new pinning cases, without interacting with a desktop. Compilation does not verify real AX focus setters or application activation.

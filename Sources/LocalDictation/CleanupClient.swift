@@ -137,7 +137,10 @@ struct CleanupClient: Sendable {
         _ = try? await clean("This is a dictation warmup.")
     }
 
-    func clean(_ transcript: String, vocabulary: VocabularySnapshot = .empty) async throws -> String {
+    func clean(_ transcript: String, vocabulary: VocabularySnapshot = .empty,
+               timeout: TimeInterval = 20) async throws -> String {
+        try Task.checkCancellation()
+        guard timeout.isFinite, timeout > 0 else { throw CleanupError.timedOut }
         let vocabulary = try VocabularySnapshot(entries: vocabulary.entries, revision: vocabulary.revision)
         let source = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !source.isEmpty else { throw CleanupError.emptyInput }
@@ -147,7 +150,7 @@ struct CleanupClient: Sendable {
         }
         let started = ProcessInfo.processInfo.systemUptime
         timingStore.set(nil)
-        do { return try await withDeadline(seconds: 20) {
+        do { return try await withDeadline(seconds: min(20, timeout)) {
             let ownership = try await self.requireLocalModel()
             let verified = ProcessInfo.processInfo.systemUptime
             let data = try JSONSerialization.data(withJSONObject: ["custom_vocabulary": vocabulary.cleanupHints(for: source), "dictated_text": source], options: [.sortedKeys])
@@ -334,11 +337,11 @@ struct CleanupClient: Sendable {
         return object
     }
 
-    private func withDeadline<T: Sendable>(seconds: UInt64, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+    private func withDeadline<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await operation() }
             group.addTask {
-                try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
                 throw CleanupError.timedOut
             }
             defer { group.cancelAll() }
@@ -350,12 +353,66 @@ struct CleanupClient: Sendable {
     /// These checks catch common generation failures; they cannot prove semantic equivalence.
     /// An uncertain result is rejected so callers can keep the verbatim transcript.
     static func validate(_ text: String, against source: String, vocabulary: VocabularySnapshot = .empty) throws -> String {
+        try validate(text, against: source, vocabulary: vocabulary, maximumOutputBytes: 6_000)
+    }
+
+    /// A passage is assembled from individually bounded requests. Its validation
+    /// must not inherit a single request's output-size limit.
+    static func validateAssembled(_ text: String, against source: String,
+                                  vocabulary: VocabularySnapshot = .empty) throws {
+        _ = try validate(text, against: source, vocabulary: vocabulary, maximumOutputBytes: nil)
+    }
+
+    /// Exact code/quoted text, paths, URLs, and command flags cannot be rewritten
+    /// by a cleanup model. The coordinator also keeps these spans indivisible.
+    static func literalRanges(in text: String) -> [NSRange] {
+        let patterns = [
+            #"```[\s\S]*?(?:```|\z)"#,
+            #"`[^`\r\n]+`"#,
+            #""[^"\r\n]*"|“[^”\r\n]*”"#,
+            #"\b(?:https?|file)://[^\s<>"`]+"#,
+            #"(?<![\p{L}\p{N}_])(?:~?/|\./|\.\./)[^\s<>"`]+"#,
+            #"\b[A-Za-z0-9_.~-]+(?:/[A-Za-z0-9_.~-]+)+\b"#,
+            #"(?<![\p{L}\p{N}_-])--?[A-Za-z][A-Za-z0-9-]*(?:=[^\s<>"`]+)?"#
+        ]
+        let all = NSRange(text.startIndex..., in: text)
+        let ns = text as NSString
+        var ranges: [NSRange] = []
+        for (index, pattern) in patterns.enumerated() {
+            let regex = try! NSRegularExpression(pattern: pattern)
+            for match in regex.matches(in: text, range: all) {
+                var range = match.range
+                if index == 3 || index == 4 {
+                    while range.length > 0, ".!?;,".contains(ns.substring(with: NSRange(location: NSMaxRange(range) - 1, length: 1))) {
+                        range.length -= 1
+                    }
+                }
+                ranges.append(range)
+            }
+        }
+        ranges.sort { $0.location == $1.location ? $0.length > $1.length : $0.location < $1.location }
+        var merged: [NSRange] = []
+        for range in ranges {
+            if let previous = merged.last, range.location < NSMaxRange(previous) {
+                merged[merged.count - 1] = NSUnionRange(previous, range)
+            } else { merged.append(range) }
+        }
+        return merged
+    }
+
+    private static func validate(_ text: String, against source: String, vocabulary: VocabularySnapshot,
+                                 maximumOutputBytes: Int?) throws -> String {
+        try Task.checkCancellation()
         let output = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !output.isEmpty, output.utf8.count <= 6_000,
-              !output.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\t" }),
+        guard !output.isEmpty, maximumOutputBytes.map({ output.utf8.count <= $0 }) ?? true,
+              !output.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\t" && !($0 == "\r" && source.contains("\r")) }),
               !output.contains("<think>"), !output.contains("</think>") else {
             throw CleanupError.invalidResponse
         }
+        let sourceText = source as NSString, outputText = output as NSString
+        guard literalRanges(in: source).map({ sourceText.substring(with: $0) })
+            == literalRanges(in: output).map({ outputText.substring(with: $0) }) else { throw CleanupError.changedProtectedText }
+        if output == source.trimmingCharacters(in: .whitespacesAndNewlines) { return output }
         var masked = (source: source, output: output)
         if !vocabulary.entries.isEmpty {
             let validated = try VocabularySnapshot(entries: vocabulary.entries, revision: vocabulary.revision)
@@ -369,7 +426,7 @@ struct CleanupClient: Sendable {
             throw CleanupError.invalidResponse
         }
         if masked.source != source || masked.output != output {
-            _ = try validate(masked.output, against: masked.source)
+            _ = try validate(masked.output, against: masked.source, vocabulary: .empty, maximumOutputBytes: maximumOutputBytes)
             return output
         }
         let inputTokens = tokens(source)
@@ -467,12 +524,116 @@ struct CleanupClient: Sendable {
         }
         let sourceContent = content(before), outputContent = content(after)
         let sourceVocabulary = Set(before.map(\.text))
+        let normalizedSource = source.lowercased().replacingOccurrences(of: "’", with: "'") as NSString
+        let normalizedOutput = output.lowercased().replacingOccurrences(of: "’", with: "'") as NSString
+        func gap(_ words: [Word], _ text: NSString, _ left: Int, _ right: Int) -> String {
+            text.substring(with: NSRange(location: NSMaxRange(words[left].range),
+                length: words[right].range.location - NSMaxRange(words[left].range)))
+        }
+        func gap(after left: Int, before right: Int) -> String { gap(before, normalizedSource, left, right) }
+        func joinsNumber(_ words: [Word], _ text: NSString, _ left: Int, _ right: Int) -> Bool {
+            let separator = gap(words, text, left, right)
+            return !separator.isEmpty && separator.allSatisfy { ($0.isWhitespace && $0 != "\n" && $0 != "\r") || $0 == "-" }
+        }
+        func numberSpan(_ words: [Word], _ text: NSString, at index: Int) -> ClosedRange<Int> {
+            let scales = Set(["hundred", "thousand", "million", "billion"])
+            func numberPart(_ index: Int) -> Bool {
+                isNumber(words[index].text) || (words[index].text == "and" && index > 0 && index + 1 < words.count
+                    && scales.contains(words[index - 1].text) && isNumber(words[index + 1].text))
+            }
+            var start = index, end = index
+            while start > 0, numberPart(start - 1), joinsNumber(words, text, start - 1, start) { start -= 1 }
+            while end + 1 < words.count, numberPart(end + 1), joinsNumber(words, text, end, end + 1) { end += 1 }
+            return start...end
+        }
+        func numberSpan(at index: Int) -> ClosedRange<Int> { numberSpan(before, normalizedSource, at: index) }
+        // Match complete phrases before word alignment: the first "twenty" in
+        // "twenty one, no, twenty two" cannot stand in for the replacement.
+        func sameNumber(_ original: ClosedRange<Int>, _ replacement: ClosedRange<Int>) -> Bool {
+            func signature(_ words: [Word], _ text: NSString, _ span: ClosedRange<Int>, deduplicate: Bool) -> [String] {
+                var result: [String] = []
+                for index in span {
+                    if index > span.lowerBound {
+                        let separator = gap(words, text, index - 1, index)
+                        if separator.contains("-"), words[index - 1].text.first?.isNumber == true || words[index].text.first?.isNumber == true {
+                            result.append("-")
+                        }
+                        if deduplicate, words[index].text == words[index - 1].text,
+                           separator.allSatisfy({ $0.isWhitespace && $0 != "\n" && $0 != "\r" }) { continue }
+                    }
+                    result.append(words[index].text)
+                }
+                return result
+            }
+            let expected = signature(after, normalizedOutput, replacement, deduplicate: false)
+            return signature(before, normalizedSource, original, deduplicate: false) == expected
+                || signature(before, normalizedSource, original, deduplicate: true) == expected
+        }
+        func afterCorrectionMarker(at index: Int) -> Int? {
+            guard index < before.count else { return nil }
+            switch before[index].text {
+            case "sorry", "actually", "correction", "no": return index + 1
+            case "i", "make", "scratch":
+                let next = before[index].text == "i" ? "mean" : "that"
+                guard index + 1 < before.count, before[index + 1].text == next else { return nil }
+                return index + 2
+            default: return nil
+            }
+        }
+        func replacementNumber(at index: Int) -> ClosedRange<Int>? {
+            let original = numberSpan(at: index)
+            let end = original.upperBound
+            var marker = end + 1
+            // A repeated unit can separate an amount from its correction:
+            // "5 large boxes, sorry 6 large boxes". Do not cross another amount
+            // or clause while searching for that local marker.
+            while marker < before.count, marker <= end + 3, afterCorrectionMarker(at: marker) == nil {
+                let word = before[marker].text
+                guard !isNumber(word), !negatives.contains(word), !exactWords.contains(word) else { return nil }
+                marker += 1
+            }
+            guard marker <= end + 3, var replacement = afterCorrectionMarker(at: marker) else { return nil }
+            let unit = before[(end + 1)..<marker].map(\.text)
+            let beforeMarker = gap(after: end, before: marker)
+            guard !beforeMarker.contains(where: { "!?;\n\r".contains($0) }),
+                  !beforeMarker.contains(".") || (unit.isEmpty && before[marker].text == "actually") else { return nil }
+            while let next = afterCorrectionMarker(at: replacement) { replacement = next }
+            // Preserve the established "Tuesday at 15:00. Actually, make that
+            // Friday at 16:00" repair without allowing arbitrary intervening text.
+            if replacement < before.count, days.contains(before[replacement].text),
+               original.lowerBound > 0, before[original.lowerBound - 1].text == "at" {
+                replacement += 1
+                guard replacement < before.count, before[replacement].text == "at" else { return nil }
+                replacement += 1
+            }
+            guard replacement < before.count, isNumber(before[replacement].text),
+                  !gap(after: marker, before: replacement).contains(where: { ".!?;\n\r".contains($0) }) else { return nil }
+            let final = numberSpan(at: replacement)
+            guard final.lowerBound == replacement,
+                  final.upperBound + unit.count < before.count,
+                  unit.enumerated().allSatisfy({ before[final.upperBound + 1 + $0.offset].text == $0.element }) else { return nil }
+            return final
+        }
         var cursor = 0, alignment: [Int] = []
         for outIndex in outputContent {
+            try Task.checkCancellation()
             let word = after[outIndex].text
             var match: Int?
             for index in cursor..<sourceContent.count {
-                let original = before[sourceContent[index]].text
+                let sourceIndex = sourceContent[index]
+                let original = before[sourceIndex].text
+                if isNumber(word), isNumber(original) {
+                    let target = numberSpan(after, normalizedOutput, at: outIndex)
+                    if target.lowerBound == outIndex {
+                        let candidate = numberSpan(at: sourceIndex)
+                        guard candidate.lowerBound == sourceIndex, sameNumber(candidate, target) else { continue }
+                        // Prefer the explicit replacement of an identical value,
+                        // unless the output still contains the spoken correction.
+                        let following = (target.upperBound + 1)..<min(after.count, target.upperBound + 5)
+                        let keepsMarker = following.contains { ["no", "sorry", "actually", "correction", "mean"].contains(after[$0].text) }
+                        if !keepsMarker, let next = replacementNumber(at: sourceIndex), sameNumber(next, target) { continue }
+                    }
+                }
                 let repairAllowed = original.count >= 4 && word.count >= 4
                     && !sourceVocabulary.contains(word)
                     && !protectedNames.contains(original) && !exactWords.contains(original)
@@ -483,12 +644,34 @@ struct CleanupClient: Sendable {
             guard let match else { throw CleanupError.changedProtectedText }
             alignment.append(match); cursor = match + 1
         }
-        // Retention ratios cannot protect a recipient that happens to be a
-        // small part of the sentence. Keep each ordinary name/identifier
-        // occurrence, except adjacent stutters and a local explicit name repair.
-        // Days have their existing spoken-correction rules above.
         let retained = Set(alignment)
-        let normalizedSource = source.lowercased().replacingOccurrences(of: "’", with: "'") as NSString
+        let retainedWords = Set(alignment.map { sourceContent[$0] })
+        func retainedNumberStutter(at index: Int) -> Bool {
+            var start = index, end = index
+            let word = before[index].text
+            func joinsStutter(_ left: Int, _ right: Int) -> Bool {
+                let separator = gap(after: left, before: right)
+                return !separator.isEmpty && separator.allSatisfy { $0.isWhitespace && $0 != "\n" && $0 != "\r" }
+            }
+            while start > 0, before[start - 1].text == word, joinsStutter(start - 1, start) { start -= 1 }
+            while end + 1 < before.count, before[end + 1].text == word, joinsStutter(end, end + 1) { end += 1 }
+            return (start...end).contains(where: { retainedWords.contains($0) })
+        }
+        func correctedNumber(at index: Int) -> Bool {
+            guard numberSpan(at: index).allSatisfy({ !retainedWords.contains($0) }),
+                  let final = replacementNumber(at: index) else { return false }
+            return final.allSatisfy {
+                retainedWords.contains($0) || retainedNumberStutter(at: $0) || (isNumber(before[$0].text) && correctedNumber(at: $0))
+            }
+        }
+        // Each occurrence must survive, be an adjacent stutter, or be explicitly
+        // replaced locally. A marker elsewhere never licenses dropping amounts.
+        for index in before.indices where isNumber(before[index].text) && !retainedWords.contains(index) {
+            try Task.checkCancellation()
+            guard retainedNumberStutter(at: index) || correctedNumber(at: index) else {
+                throw CleanupError.changedProtectedText
+            }
+        }
         func correctedName(at slot: Int) -> Bool {
             var index = sourceContent[slot]
             // A correction can supersede a full name such as Alex Smith.
@@ -531,7 +714,7 @@ struct CleanupClient: Sendable {
         let permitsCorrection = hasSelfCorrection(source)
         for slot in sourceContent.indices {
             let word = before[sourceContent[slot]].text
-            guard protectedNames.contains(word), !days.contains(word), !retained.contains(slot),
+            guard protectedNames.contains(word), !days.contains(word), !isNumber(word), !retained.contains(slot),
                   !(permitsCorrection && correctionWords.contains(word)) else { continue }
             var start = slot, end = slot
             while start > 0 && before[sourceContent[start - 1]].text == word { start -= 1 }

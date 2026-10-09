@@ -10,7 +10,7 @@ final class TextInserter {
     struct Target: @unchecked Sendable {
         let processIdentifier: pid_t
         let focusedElement: AXUIElement?
-        let focusedLeaf: AXUIElement?
+        var focusedLeaf: AXUIElement?
         let role: String
         let selection: CFRange?
         let selectionMarker: CFTypeRef?
@@ -20,6 +20,9 @@ final class TextInserter {
         let webEditor: Bool
         var captureEpoch: UInt64? = nil
         var captureOwner: UUID? = nil
+        var originalWindow: AXUIElement? = nil
+        var preserveDestination = false
+        var deliveryInputEpoch: UInt64? = nil
         var canInsertAutomatically: Bool { focusedElement != nil }
     }
 
@@ -33,6 +36,7 @@ final class TextInserter {
         let selectionMarker: CFTypeRef?
         let epoch: UInt64
         let owner: UUID
+        var preserveDestination = false
     }
 
     enum InsertionResult { case verified, sentWithoutVerification }
@@ -42,6 +46,8 @@ final class TextInserter {
     private let inspector = TargetInspector()
     private let owner = UUID()
     private var captureEpoch: UInt64 = 0
+    private var inputEpoch: UInt64 = 0
+    private var destinationDelivery: AXRequestCancellation?
     private var activationObserver: NSObjectProtocol?
     private var focusObserver: AXObserver?
     private var focusObserverPID: pid_t?
@@ -53,7 +59,7 @@ final class TextInserter {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.invalidateCapture()
+                self.captureEpoch &+= 1
                 self.onFocusChanged?()
                 self.primeFrontmostAccessibility()
             }
@@ -76,8 +82,13 @@ final class TextInserter {
     }
 
     /// Hook physical mouse/key/scroll activity here. No typed characters are
-    /// collected. An away-and-return interaction stays invalid for this origin.
-    func invalidateCapture() { captureEpoch &+= 1 }
+    /// collected. Pinned recordings survive earlier activity, but new input
+    /// during destination restoration aborts before a paste is dispatched.
+    func invalidateCapture() {
+        captureEpoch &+= 1
+        inputEpoch &+= 1
+        destinationDelivery?.cancel()
+    }
 
     func primeFrontmostAccessibility() {
         guard Self.accessibilityGranted(), let app = NSWorkspace.shared.frontmostApplication,
@@ -104,7 +115,7 @@ final class TextInserter {
         guard let info else { return }
         let owner = Unmanaged<TextInserter>.fromOpaque(info).takeUnretainedValue()
         DispatchQueue.main.async {
-            owner.invalidateCapture()
+            owner.captureEpoch &+= 1
             owner.onFocusChanged?()
         }
     }
@@ -112,7 +123,7 @@ final class TextInserter {
     /// Call after starting the microphone. This is a bounded identity-only
     /// snapshot; no text reads or Chromium enablement waits. A remote focused
     /// leaf may use a bounded identity-only window-containment check.
-    func beginCapture(expectedProcessIdentifier: pid_t? = nil) -> Anchor? {
+    func beginCapture(expectedProcessIdentifier: pid_t? = nil, preserveDestination: Bool = false) -> Anchor? {
         guard Self.accessibilityGranted(), let app = NSWorkspace.shared.frontmostApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               expectedProcessIdentifier == nil || app.processIdentifier == expectedProcessIdentifier else { return nil }
@@ -133,7 +144,8 @@ final class TextInserter {
         guard !context.inspectionFailed, range != nil || stableMarker, epoch == captureEpoch,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return nil }
         return Anchor(processIdentifier: app.processIdentifier, focusedLeaf: leaf, cursorElement: cursorElement,
-                      selection: range, selectionMarker: marker, epoch: epoch, owner: owner)
+                      selection: range, selectionMarker: marker, epoch: epoch, owner: owner,
+                      preserveDestination: preserveDestination)
     }
 
     func inspect(_ anchor: Anchor) async throws -> Target {
@@ -142,6 +154,9 @@ final class TextInserter {
         try checkOrigin(anchor)
         target.captureEpoch = anchor.epoch; target.captureOwner = owner
         try finalIdentityCheck(target)
+        // Pin only after the initial snapshot has passed the strict origin
+        // checks. A focus change during capture cannot adopt another field.
+        target.preserveDestination = anchor.preserveDestination
         return target
     }
 
@@ -184,8 +199,38 @@ final class TextInserter {
         guard target.canInsertAutomatically else { throw InsertionError.unverifiedTarget }
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
               target.captureOwner == nil || target.captureOwner == owner,
-              target.captureEpoch == nil || target.captureEpoch == captureEpoch
+              target.preserveDestination || target.captureEpoch == nil || target.captureEpoch == captureEpoch,
+              target.deliveryInputEpoch == nil || target.deliveryInputEpoch == inputEpoch
         else { throw InsertionError.targetChanged }
+    }
+
+    private func prepareDestination(_ original: Target) async throws -> Target {
+        guard original.preserveDestination else { return original }
+        guard original.captureOwner == owner, Self.accessibilityGranted() else {
+            throw InsertionError.unverifiedTarget
+        }
+        let cancellation = AXRequestCancellation()
+        destinationDelivery = cancellation
+        var target = original
+        target.deliveryInputEpoch = inputEpoch
+        return try await DestinationRestoration.prepare(target,
+            check: { try cancellation.check() },
+            validateCurrent: { try await self.validate($0) },
+            validateOriginal: { try await self.inspector.validateDestination($0, cancellation: cancellation) },
+            activate: {
+                guard let app = NSRunningApplication(processIdentifier: target.processIdentifier), !app.isTerminated else {
+                    throw InsertionError.targetChanged
+                }
+                if !app.isActive { app.activate(options: []) }
+                let deadline = ProcessInfo.processInfo.systemUptime + 0.6
+                while NSWorkspace.shared.frontmostApplication?.processIdentifier != target.processIdentifier {
+                    try Task.checkCancellation()
+                    try cancellation.check()
+                    guard ProcessInfo.processInfo.systemUptime < deadline else { throw InsertionError.targetChanged }
+                    try await Task.sleep(nanoseconds: 20_000_000)
+                }
+            },
+            restore: { try await self.inspector.restoreDestination($0, cancellation: cancellation) })
     }
 
     private func finalIdentityCheck(_ target: Target) throws {
@@ -201,7 +246,8 @@ final class TextInserter {
                 onVerified: (@MainActor () -> Void)? = nil) async throws -> InsertionResult {
         guard !text.isEmpty else { return .verified }
         try await Self.deliveries.acquire()
-        defer { Self.deliveries.release() }
+        defer { destinationDelivery = nil; Self.deliveries.release() }
+        let target = try await prepareDestination(target)
         try await validate(target)
         try await waitForReleasedModifiers()
         try await validate(target)

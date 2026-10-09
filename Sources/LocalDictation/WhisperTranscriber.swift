@@ -34,11 +34,11 @@ final class WhisperTranscriber {
     private let model: URL
 
     private let startupTimeout: TimeInterval
-    private let requestTimeout: TimeInterval
+    private let requestTimeoutOverride: TimeInterval?
 
-    init(resources: URL, models: URL? = nil, startupTimeout: TimeInterval = 90, requestTimeout: TimeInterval = 120) {
+    init(resources: URL, models: URL? = nil, startupTimeout: TimeInterval = 90, requestTimeout: TimeInterval? = nil) {
         self.startupTimeout = startupTimeout
-        self.requestTimeout = requestTimeout
+        self.requestTimeoutOverride = requestTimeout
         executable = resources.appendingPathComponent("whisper-worker")
         model = (models ?? resources.appendingPathComponent("Models")).appendingPathComponent("ggml-large-v3-turbo-q8_0.bin")
     }
@@ -87,6 +87,9 @@ final class WhisperTranscriber {
 
     func transcribe(_ samples: [Float], vocabulary: VocabularySnapshot = .empty) async throws -> String {
         try Task.checkCancellation()
+        guard !samples.isEmpty, samples.count <= RecordingPolicy.maximumSamples else {
+            throw DictationError.message("The dictation audio was empty or too long.")
+        }
         let vocabulary = try VocabularySnapshot(entries: vocabulary.entries, revision: vocabulary.revision)
         let generation = currentGeneration()
         return try await withTaskCancellationHandler(operation: {
@@ -99,9 +102,7 @@ final class WhisperTranscriber {
                         try self.ensureRunning(expectedGeneration: generation)
                         try self.checkGeneration(generation)
                         let prepared = ProcessInfo.processInfo.systemUptime
-                        guard !samples.isEmpty, samples.count <= 1_920_000, let input = self.input else {
-                            throw DictationError.message("The dictation audio was empty or too long.")
-                        }
+                        guard let input = self.input else { throw DictationError.message("The speech engine is unavailable.") }
                         var count = UInt32(samples.count).littleEndian
                         var packet = withUnsafeBytes(of: &count) { Data($0) }
                         if self.workerProtocol == 2 {
@@ -116,7 +117,7 @@ final class WhisperTranscriber {
                             }
                         }
                         samples.withUnsafeBytes { packet.append(contentsOf: $0) }
-                        let deadline = ProcessInfo.processInfo.systemUptime + self.requestTimeout
+                        let deadline = ProcessInfo.processInfo.systemUptime + self.requestTimeout(sampleCount: samples.count)
                         try self.write(packet, to: input.fileDescriptor, deadline: deadline, generation: generation)
                         let written = ProcessInfo.processInfo.systemUptime
                         let result = try self.readJSON(deadline: deadline, generation: generation)
@@ -153,6 +154,12 @@ final class WhisperTranscriber {
         // Termination also interrupts a recognition request; its caller handles the error.
         cancel()
         queue.async { self.reset() }
+    }
+
+    /// Includes request writing and recognition. Explicit overrides keep fault
+    /// tests bounded; normal recordings over two minutes get a larger budget.
+    func requestTimeout(sampleCount: Int) -> TimeInterval {
+        requestTimeoutOverride ?? (sampleCount > Int(RecordingPolicy.sampleRate) * 120 ? 180 : 120)
     }
 
     func cancel() {

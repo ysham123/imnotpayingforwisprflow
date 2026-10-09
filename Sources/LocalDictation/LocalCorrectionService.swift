@@ -23,6 +23,16 @@ final class LocalCorrectionService {
         CleanupClient(baseURL: serviceEndpoint, model: model, ownedServiceLease: lease)
     }
 
+    /// Output rejection is a successful service exchange, so only transport or
+    /// deadline failures invalidate readiness and warrant a background retry.
+    nonisolated static func shouldRecover(after error: Error) -> Bool {
+        guard let error = error as? CleanupError else { return false }
+        switch error {
+        case .serviceUnavailable, .timedOut: return true
+        default: return false
+        }
+    }
+
     func start() async throws {
         try Task.checkCancellation()
         if let startTask { try await startTask.value; try Task.checkCancellation(); return }
