@@ -21,8 +21,8 @@
 
 The latest public release is **v1.3.0**. This branch contains unreleased 2.0
 development work; its newer features and checks are not yet part of the download
-linked above. See the [2.0 validation record](docs/VALIDATION.md) for current
-results and limits.
+linked above. See the [2.0.1 release-note draft](docs/releases/v2.0.1-draft.md)
+and [validation record](docs/VALIDATION.md) for current results and limits.
 
 Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Shortcuts → Change shortcut…**.
 
