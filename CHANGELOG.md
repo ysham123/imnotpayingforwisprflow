@@ -1,12 +1,12 @@
 # Changelog
 
-## 2.0.1 (unreleased)
+## 2.0.1 (2026-10-09)
 
 - Keep the original verified field and caret attached to a recording when you click, scroll, or switch applications. At delivery, restore that destination when its text and window still match. The original application may come forward to receive the paste.
 - Hold the transcript when the original contents changed, the window disappeared, restoration is unsupported, or new input interrupts delivery. Explicit placement and retry continue to require a freshly selected field.
 - Add headless restoration-order and cancellation regressions plus native fixture cases. Live app compatibility is pending; see [validation](docs/VALIDATION.md).
 
-## 2.0.0 (unreleased)
+### Included 2.0 improvements
 
 - Record for up to five minutes with an elapsed timer, microphone meter, and final countdown. Quiet speech windows survive long pauses.
 - Choose Clean or Verbatim mode. Long Clean transcripts use bounded passages with protected numeric phrases, identifiers, links, paths, and quoted/code spans. Use original skips cleanup while it is running.

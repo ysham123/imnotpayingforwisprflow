@@ -19,10 +19,11 @@
 
 **Click a text box. Double-tap Fn / Globe. Speak. Tap Fn once to finish.**
 
-The latest public release is **v1.3.0**. This branch contains unreleased 2.0
-development work; its newer features and checks are not yet part of the download
-linked above. See the [2.0.1 release-note draft](docs/releases/v2.0.1-draft.md)
-and [validation record](docs/VALIDATION.md) for current results and limits.
+The latest public release is **v2.0.1**, with Clean and Verbatim modes,
+five-minute recording, microphone selection, recording retry, native Settings,
+and restoration of the original text box and caret where supported. See the
+[2.0.1 release notes](docs/releases/v2.0.1.md) and
+[validation record](docs/VALIDATION.md) for results and compatibility limits.
 
 Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Shortcuts → Change shortcut…**.
 
@@ -120,7 +121,7 @@ Choose your microphone in **Settings… → Audio** and use **Test microphone** 
 
 If speech recognition fails, **Retry** uses the same recording without asking you to speak again. One failed recording stays in memory until recognition succeeds, you choose **Discard**, or you quit. New recording is blocked while it waits. A successful retry holds text for you to place explicitly.
 
-In the unreleased **2.0.1 development build**, the original verified text box and caret stay attached to your recording when you click elsewhere, scroll, or move the cursor. When the transcript is ready, the app returns to that destination if its contents are unchanged; this can bring the original application forward. Editors that cannot restore focus or selection through Accessibility still require explicit placement. Automated native fixture cases cover restoration; live compatibility in multiple third-party editors remains unverified.
+In **2.0.1**, the original verified text box and caret stay attached to your recording when you click elsewhere, scroll, or move the cursor. When the transcript is ready, the app returns to that destination if its contents are unchanged; this can bring the original application forward. Editors that cannot restore focus or selection through Accessibility still require explicit placement. Automated restoration checks pass; live compatibility in multiple third-party editors remains unverified.
 
 If the original text changed, the destination disappeared, or placement cannot be verified, the indicator shows **Text ready**. Click the intended text box and use your selected shortcut: **tap Fn once** with the default gesture, or **press your custom shortcut once**. With Fn / Globe, a short pause distinguishes this single tap from a double-tap. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; it is protected from being overwritten by a new recording.
 
@@ -205,7 +206,7 @@ The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting 
 | Permissions are lost after an unchanged relaunch | Check that only the installed copy is running. Export permission diagnostics and report it; repeated removal/re-addition should not be the normal launch workflow. |
 | All permissions are allowed, but the listener cannot start | Choose **Retry shortcut listener**. A shortcut conflict, event-tap failure, and run-loop failure have separate messages. |
 | Text ready | Click the intended text box and use your selected shortcut once. If the field cannot be verified, choose **Copy** and paste manually. |
-| The original destination changed | The 2.0.1 development build restores an unchanged field and caret where supported. Changed text or an unavailable field keeps your transcript waiting for explicit placement. |
+| The original destination changed | 2.0.1 restores an unchanged field and caret where supported. Changed text or an unavailable field keeps your transcript waiting for explicit placement. |
 | “Paste sent” | Check the field before pasting again. The app could not confirm the result and does not retry automatically. |
 | Correction is unavailable | The current dictation uses the original transcript while cleanup recovers in the background. Verbatim mode does not require cleanup. |
 | Recording saved | Choose **Retry** to transcribe the retained audio, or **Discard** to release it and record again. |

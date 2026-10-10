@@ -1,6 +1,18 @@
 # Release validation
 
-This records the v2.0.1 and v2.0 candidate checks and preserves historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+This records the v2.0.1 public package, its earlier candidate checks, and historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+
+## 2.0.1 public package, 2026-10-09
+
+The creator authorized publication of 2.0.1 with the remaining live compatibility checks disclosed. The public Apple Silicon/macOS 14+ app is **2.0.1 build11**, compiled from `20f3b984634fb20a0ff3170665f7d95082672d14`. The production Swift executable and pinned native speech worker were rebuilt. GitHub Actions passed the full macOS regression workflow for that source commit.
+
+- The public app is ad-hoc signed and not notarized. The creator's certificate-signed local installation is separate and was not replaced during release packaging.
+- `hdiutil verify` passed for the **12,819,225-byte** DMG, SHA-256 `f5417c93573dda301a2347e9fad7f95d861c29e40ae2f3bd766fd5746e658c42`.
+- The read-only mounted app passed strict signature verification and matched all **74 files** of the packaged app. The package includes licenses and pinned model metadata; model weights and private signing keys are absent.
+- The production `AppInstallTransaction` installed the mounted app into a fresh isolated destination and upgraded a separate copy of the previous public **1.3.0** app. Both used real signature verification and filesystem operations. All 74 installed files matched; the creator's working installation was untouched.
+- See [public package and installation evidence](benchmarks/v2.0.1/public-release-package.json). The source changes were already covered by the passing regression suites and paired synthetic measurements recorded below.
+
+Live placement across multiple third-party editors, repeated 2.0.1 restarts, fresh-recipient launch/Gatekeeper behavior, and permission continuity across a later public update remain unverified. The public app can require renewed privacy approval after its ad-hoc identity changes. The local certificate's one verified restart does not establish public-package permission continuity. Editor compatibility and general recognition accuracy are qualified in the [release notes](releases/v2.0.1.md).
 
 ## 2.0.1 original destination fix, 2026-10-09
 
@@ -19,7 +31,7 @@ The creator additionally reported repeated remove/re-add permission steps after 
 
 ## v2.0.0 candidate (2026-10-09)
 
-Status: the ad-hoc signed **v2.0.0 build10 candidate is installed** at `/Applications/Local Dictation.app`. The creator completed permission setup. Its exact designated requirement and all 74 bundled file hashes match the verified candidate, and the latest readiness record shows authorized Microphone, Accessibility, and Input Monitoring with an active shortcut listener. This candidate has not been published. A new release build compiles successfully; standalone assertion suites are used because this Command Line Tools installation cannot discover XCTest's platform path.
+Historical status at the 2.0.0 check: the ad-hoc signed **v2.0.0 build10 candidate was installed** at `/Applications/Local Dictation.app`. The creator completed permission setup. Its exact designated requirement and all 74 bundled file hashes matched the verified candidate, and its readiness record showed authorized Microphone, Accessibility, and Input Monitoring with an active shortcut listener. That candidate was not published and was later replaced by 2.0.1. A new release build compiled successfully; standalone assertion suites are used because this Command Line Tools installation cannot discover XCTest's platform path.
 
 | Area | Current evidence |
 |---|---|
@@ -56,11 +68,11 @@ A tool-daemon restart interrupted the original quiet-case benchmark parent. Its 
 
 Quality-marker results are identical between baseline and candidate on paired cases. Every 30-second sample passed all markers. Both builds retained the checked quantities and negation in longer samples, but missed case-sensitive identifier spellings and some vocabulary markers; those remain a recognition/spelling limitation. Both builds conservatively fell back on the short correction fixture. A separate synthetic-only diagnostic found that Qwen rewrote `Use 5, sorry, 6 reports, do not delete userId` as `Use 5, actually 6 reports, do not delete userId`; validation rejected the rewrite and preserved the original. No prompt or guard was weakened to make that example pass. This is synthetic evidence about specified markers, not a general accuracy score or a guarantee of semantic equivalence.
 
-### Remaining rollout gates
+### Checks deferred from the candidate rollout
 
 - Verify the candidate's normal/full-screen HUD, actual Use original and Retry controls, microphone preview/selection/unplugging, and native Settings interactions.
 - Repeat unchanged relaunches and verify physical dictation on this Mac. One unchanged-build restart and renewed-grant readiness are verified; live editor behavior remains separate. The timed-out computer-control launch does not independently prove each installer click.
-- Publish a prerelease only after those checks; promote to stable after daily-use and recipient-install validation.
+- The earlier plan deferred publication until these checks. The creator subsequently authorized the 2.0.1 public release with these limits disclosed; the checks remain outstanding.
 
 Direct computer-use access to Local Dictation currently times out. Automatic approval review also rejected a broader Finder inspection as unnecessary exposure of unrelated files; no workaround was used. The creator completed setup directly. The agent did not reset permissions, alter login settings, or claim pending live UI/relaunch checks as passed.
 

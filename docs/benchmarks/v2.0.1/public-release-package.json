@@ -1,0 +1,32 @@
+{
+  "version": "2.0.1",
+  "build": "11",
+  "compiledSourceCommit": "20f3b984634fb20a0ff3170665f7d95082672d14",
+  "publicSigning": "ad-hoc",
+  "notarized": false,
+  "dmgVerified": true,
+  "mountedReadOnly": true,
+  "mountedSignatureVerified": true,
+  "mountedFilesMatched": 74,
+  "privateKeyScanPassed": true,
+  "bundledModelWeights": false,
+  "executableSHA256": "80e84ad1e4a4a3f70bed7e47e77a01b41403940ecfebd8750f20e14e22b52619",
+  "workerSHA256": "0e5d04a7bf5c4c7c3fab57764577654edbfeda10f33730a33c494747e16ca8cd",
+  "dmg": {
+    "name": "Local-Dictation.dmg",
+    "sha256": "f5417c93573dda301a2347e9fad7f95d861c29e40ae2f3bd766fd5746e658c42",
+    "bytes": 12819225
+  },
+  "installation": {
+    "build": "11",
+    "filesMatched": 74,
+    "freshInstallationVerified": true,
+    "installedUserAppModified": false,
+    "previousVersion": "1.3.0",
+    "productionTransaction": true,
+    "realSigningChecks": true,
+    "signaturesPreserved": true,
+    "updateInstallationVerified": true,
+    "version": "2.0.1"
+  }
+}
