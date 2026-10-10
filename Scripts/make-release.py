@@ -183,7 +183,7 @@ def main():
         copy_bytes(args.app, stage)
         # Every byte of the signed app is preserved. Never sign it ad-hoc here.
         validate_release_app(stage, requirement)
-        readme = ('LOCAL DICTATION ' + version + '\n\nOpen Local Dictation.app and choose Install & Open.\n'
+        readme = ('LOCAL DICTATION ' + version + '\n\nOpen START HERE.html for the setup guide.\nOpen Local Dictation.app and choose Install & Open.\n'
                   'The installed app downloads and verifies about 3.4 GB of local models\n'
                   'into Application Support on first use. Existing verified models are reused.\n'
                   'Then grant Microphone, Accessibility, and Input Monitoring in Settings.\n'
@@ -191,6 +191,7 @@ def main():
                   'review System Settings > Privacy & Security > Open Anyway.\n'
                   'Installation does not change Gatekeeper, certificate trust, or permissions.\n')
         write_bytes_checked(content / 'READ ME FIRST.txt', readme.encode())
+        write_bytes_checked(content / 'START HERE.html', read_bytes_checked(args.app / 'Contents/Resources/StartHere.html'))
         subprocess.run(['hdiutil', 'create', '-volname', 'Local Dictation', '-srcfolder', str(content),
                         '-format', 'UDZO', '-ov', str(image)], check=True)
         hash_file_checked(image)  # Reject empty/truncated image reads before verification.

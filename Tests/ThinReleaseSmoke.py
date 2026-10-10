@@ -58,6 +58,7 @@ def fixture_app(root):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(('signed fixture ' + name).encode()); path.chmod(0o755)
     package.copy_bytes(source / 'Resources/ModelManifest.json', resources / 'ModelManifest.json')
+    package.copy_bytes(source / 'Resources/StartHere.html', resources / 'StartHere.html')
     (resources / 'Licenses').mkdir()
     (resources / 'Licenses/license.txt').write_text('fixture license\n')
     (app / 'Contents/_CodeSignature').mkdir()
@@ -88,6 +89,7 @@ with tempfile.TemporaryDirectory(prefix='localdictation-thin-release-') as temp:
             content = Path(arguments[arguments.index('-srcfolder') + 1])
             assert (content / 'Local Dictation.app').is_dir()
             assert package.read_text_checked(content / 'READ ME FIRST.txt').startswith('LOCAL DICTATION ')
+            assert package.read_bytes_checked(content / 'START HERE.html') == original_bytes[Path('Contents/Resources/StartHere.html')]
             Path(arguments[-1]).write_bytes(b'synthetic complete DMG fixture\n')
         return SimpleNamespace(stdout='', stderr='', returncode=0)
 
