@@ -13,7 +13,7 @@ build_dir="${LOCALDICTATION_VOCAB_BUILD_DIR:-$source_dir/.test-build/real-vocabu
 if [ "$mode" = '--compile-only' ]; then build_dir="${1:-$build_dir}"; fi
 mkdir -p "$build_dir/ModuleCache"
 swiftc -O -swift-version 5 -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "$source_dir/Sources/DictationCore/Vocabulary.swift" \
+  "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/DictationCore/RecordingPolicy.swift" \
   "$source_dir/Sources/LocalDictation/WhisperTranscriber.swift" \
   "$source_dir/Sources/LocalDictation/CleanupClient.swift" \
   "$source_dir/Sources/LocalDictation/LocalCorrectionService.swift" \

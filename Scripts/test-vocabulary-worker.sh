@@ -32,7 +32,7 @@ while True:
 PY
 chmod +x "$resources/whisper-worker"
 swiftc -swift-version 5 -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "$source_dir/Sources/DictationCore/Vocabulary.swift" \
+  "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/DictationCore/RecordingPolicy.swift" \
   "$source_dir/Sources/LocalDictation/WhisperTranscriber.swift" \
   "$source_dir/Tests/VocabularyWorkerSmoke.swift" -o "$build_dir/worker-smoke"
 "$build_dir/worker-smoke" "$resources"

@@ -1,0 +1,14 @@
+{
+  "version": "2.0.1",
+  "build": 11,
+  "installed": true,
+  "filesMatched": 74,
+  "backupFilesMatched": 74,
+  "executableSHA256": "d887f07a44ae2f62b90c37930db1c992eb65b98485afba3721956abe6ae22410",
+  "certificateSHA1": "1D21DEB59FDE19108D3DADBF6D4A1797D6CC7987",
+  "signatureVerified": true,
+  "resignedDuringInstallation": false,
+  "publication": "RENAME_SWAP",
+  "permissionRetentionVerified": false,
+  "permissionRetentionScope": "Not tested during this installation record; a later unchanged-build restart is recorded separately in local-signing-verification.json"
+}

@@ -1,6 +1,68 @@
 # Release validation
 
-This records the v1.3 release validation and preserves historical v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+This records the v2.0.1 and v2.0 candidate checks and preserves historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+
+## 2.0.1 original destination fix, 2026-10-09
+
+Installed **2.0.1 build11** after the creator confirmed the app was closed. The signed candidate and installed bundle match across 74 files; the verified 2.0.0 build10 rollback copy also matches all 74 prior files. Installation preserved the candidate signature. See [installation evidence](benchmarks/v2.0.1/installation.json).
+
+- Production build: `swift build --disable-sandbox -c release` passed. The normal nested SwiftPM sandbox fails under this executor; the project build script already uses this option.
+- Eight headless destination-restoration groups passed: unchanged focus, ordered restore, changed/missing destination before activation, physical interruption at four async boundaries, interrupted fast path, failed restore, final identity mismatch, and canceled requests.
+- Three target-inspector cancellation groups passed, including queued restoration interrupted by physical input independently of Swift task cancellation.
+- The native fixture with four added placement cases compiled. These cases cover original-field/selection restoration, Unicode caret restoration, earlier scrolling, and edited-original rejection. The shared web insertion suite also compiled. These GUI suites have **not** been run on the interactive desktop in this session.
+- The dictation engines and models are unchanged from 2.0.0; model benchmarks were not repeated for this placement-only patch.
+- Native desktop-control requests time out, including the request to open the installed app. The app's own readiness record confirms build11 launched from `/Applications/Local Dictation.app`; after setup, a later quit/reopen record at `2026-10-09T22:39:32Z` shows microphone, Accessibility, Input Monitoring, and the listener ready again.
+
+Restoration requires a live unchanged editor/window and supported AX focus/selection setters. It can bring the original app/window forward. Closed tabs, opaque editors, changed original content, unsupported setters, and new physical input during delivery keep the transcript pending. The original editor is never replaced by the currently focused field. Actual native/Chrome/Electron cross-window and cross-Space behavior still requires live validation; compilation and headless ordering checks do not establish universal editor compatibility.
+
+The creator additionally reported repeated remove/re-add permission steps after quitting. Local diagnostics show the earlier permission resets coincided with changes from build6 to build10 and build11, each with a different ad-hoc code hash. Older unchanged build6 launches retained all grants across multiple sessions. After the creator completed setup for the certificate-signed build11, one quit/reopen launched a new process with microphone, Accessibility, Input Monitoring, and the shortcut listener ready. This verifies one unchanged-build restart on this Mac. A later signed build update and other Macs remain untested; see [local signing notes](LOCAL-SIGNING.md) and [verification record](benchmarks/v2.0.1/local-signing-verification.json).
+
+## v2.0.0 candidate (2026-10-09)
+
+Status: the ad-hoc signed **v2.0.0 build10 candidate is installed** at `/Applications/Local Dictation.app`. The creator completed permission setup. Its exact designated requirement and all 74 bundled file hashes match the verified candidate, and the latest readiness record shows authorized Microphone, Accessibility, and Input Monitoring with an active shortcut listener. This candidate has not been published. A new release build compiles successfully; standalone assertion suites are used because this Command Line Tools installation cannot discover XCTest's platform path.
+
+| Area | Current evidence |
+|---|---|
+| Session and recovery | Failed-recording retry/discard, retry cancellation, stale completion, pending placement, copy backup, and content-free metrics checks pass. Successful retry never reuses the original target. |
+| Cleanup | 79 conservative validation cases, 42 vocabulary checks, and 12 coordinator groups pass. Covers shared-prefix numeric corrections, repeated quantities, quoted/code literals, exact separators, Unicode, transcripts over 6KB, per-request/aggregate deadlines, cancellation, bounded requests, and preserved fallback. |
+| Local correction service | 10 isolated HTTP metadata/retention/deadline checks pass. A request timeout can trigger recovery; reaching only the overall passage budget does not. Existing correction lifecycle tests exercise outage and replacement independently of user models. |
+| Audio and worker | 10 audio/device groups, 12 native speech-activity cases, 9 transcriber checks, 5 worker-fault checks, and 11 native framing checks pass. Swift and C++ agree on 4,800,000 samples (five minutes at 16kHz). |
+| Settings | Three preference/action-gate/login-state groups pass. The native window fixture compiles; five sections have scrollable content at normal and minimum sizes. Login actions use injected operations in tests and never change the user's login settings. |
+| Existing controls | 30 gesture, 123 shortcut, 19 permission/listener, 8 vocabulary IPC, 26 runtime/model/installation, and 2 target-inspection groups pass. Packaging, thin-release, actual ad-hoc signing, and historical installer fixtures pass. |
+| UI | New HUD and Settings render fixtures generate synthetic previews. HUD controls and all five Settings pages were inspected in rendered previews. Native unselected tab labels appear black in offscreen snapshots, so their live appearance remains unverified. Cross-app clicks, physical microphone selection/unplugging, and installed-app interaction remain separate checks. |
+| Real models | Paired synthetic benchmark harness compiles for the saved pre-upgrade source and the candidate. Identical hashed short/30s/120s/300s/quiet-pause WAVs measure Clean and Verbatim separately. All 150 completed measured samples succeeded. The short p95 gate passes in both modes; see the measured results below. |
+
+Sandbox-only failures were rerun outside the sandbox: macOS double-click interval access, process inventory for the actual installation fixture, and localhost HTTP fixtures. One 0.7-second worker startup fault fixture failed while compilation competed for resources, then passed in isolation. These are recorded separately from product failures.
+
+The native worker was rebuilt from the pinned whisper.cpp1.8.3 archive. Models and protocol2 remain unchanged. The baseline snapshot contains the earlier correction-recovery and quantity-retention fixes, so the upgrade benchmark compares against the source immediately before the 2.0 changes, not the installed build6 executable.
+
+The separately packaged build10 DMG is **12,817,165 bytes**, SHA256 `99a3d5eca473403145a188932b4a4d2d00a7c2222ebdd1cc05db91ff7f6d2a8a`. `hdiutil verify` passed. The mounted read-only app passed strict signature verification against its exact designated requirement; all 74 files matched the signed candidate. The image was ejected. A separate rollback copy of the installed v1.3.0 build6 also passed strict verification and matched all 74 original files. See [candidate package evidence](benchmarks/v2.0/candidate-package.json).
+
+### Paired synthetic model measurements
+
+[Full numeric report](benchmarks/v2.0/paired-report.json): 20 warm short samples per build/mode and five per supported long case/mode, totaling 150 completed measurements with **zero processing failures**. Startup, microphone capture, and delivery are excluded. Both builds received identical hashed WAVs and vocabulary snapshots; models ran sequentially. The baseline has no five-minute support and is explicitly skipped for that case.
+
+| Audio | Baseline Clean median / p95 | Candidate Clean median / p95 | Candidate Verbatim median / p95 |
+|---|---:|---:|---:|
+| 4.34 seconds | 1.548 / 2.059 s | 1.584 / 2.060 s | 0.756 / 0.813 s |
+| 30 seconds | 3.093 / 3.554 s | 3.209 / 3.261 s | 0.973 / 1.067 s |
+| 120 seconds | 12.662 / 13.836 s | 12.106 / 12.970 s | 4.673 / 4.935 s |
+| 300 seconds | Unsupported | 32.224 / 33.905 s | 10.464 / 20.167 s |
+| Quiet speech with long pauses, 120 seconds | 15.423 / 16.441 s | 15.911 / 17.335 s | 4.998 / 5.916 s |
+
+Short Clean p95 increased by about 1 ms; short Verbatim p95 increased from 0.766 to 0.813 seconds (47 ms, about 6.2%). Both are within 10% and 250 ms. Long-case p95 uses only five samples and is the observed maximum, not a reliable tail-latency estimate.
+
+A tool-daemon restart interrupted the original quiet-case benchmark parent. Its partial one-row report was retained separately and the entire quiet case was rerun. Earlier completed case reports were preserved. One five-minute cleanup request timed out and used the original transcript; the last five-minute Verbatim sample was also slower around the restart interval. These completed samples remain in the report.
+
+Quality-marker results are identical between baseline and candidate on paired cases. Every 30-second sample passed all markers. Both builds retained the checked quantities and negation in longer samples, but missed case-sensitive identifier spellings and some vocabulary markers; those remain a recognition/spelling limitation. Both builds conservatively fell back on the short correction fixture. A separate synthetic-only diagnostic found that Qwen rewrote `Use 5, sorry, 6 reports, do not delete userId` as `Use 5, actually 6 reports, do not delete userId`; validation rejected the rewrite and preserved the original. No prompt or guard was weakened to make that example pass. This is synthetic evidence about specified markers, not a general accuracy score or a guarantee of semantic equivalence.
+
+### Remaining rollout gates
+
+- Verify the candidate's normal/full-screen HUD, actual Use original and Retry controls, microphone preview/selection/unplugging, and native Settings interactions.
+- Repeat unchanged relaunches and verify physical dictation on this Mac. One unchanged-build restart and renewed-grant readiness are verified; live editor behavior remains separate. The timed-out computer-control launch does not independently prove each installer click.
+- Publish a prerelease only after those checks; promote to stable after daily-use and recipient-install validation.
+
+Direct computer-use access to Local Dictation currently times out. Automatic approval review also rejected a broader Finder inspection as unnecessary exposure of unrelated files; no workaround was used. The creator completed setup directly. The agent did not reset permissions, alter login settings, or claim pending live UI/relaunch checks as passed.
 
 ## Environment
 

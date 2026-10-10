@@ -1,0 +1,17 @@
+{
+  "build": "10",
+  "bundleIdentifier": "dev.yosef.localdictation",
+  "codeHash": "67750f8b7a1528ae0c94bf06817b21de3441e0cb",
+  "creator_report": "setup_completed",
+  "date": "2026-10-09T20:33:52Z",
+  "event": "readinessChanged",
+  "executableSHA256": "fe80349422523bda89f992dde807a92b066f67b2ae5eb9f27d18504b540bde9c",
+  "readiness": {
+    "accessibility": true,
+    "inputMonitoring": true,
+    "listenerActive": true,
+    "microphone": 3
+  },
+  "source": "installed_app_readiness_log",
+  "version": "2.0.0"
+}

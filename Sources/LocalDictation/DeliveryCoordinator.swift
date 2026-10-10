@@ -38,3 +38,37 @@ final class DeliveryCoordinator {
         }
     }
 }
+
+/// Orders restoration so an unchanged-content check happens before any focus
+/// mutation. The check barrier also stops user-interrupted or canceled work at
+/// each asynchronous boundary. Operations are injected for headless testing.
+@MainActor
+enum DestinationRestoration {
+    static func prepare<T>(
+        _ target: T,
+        check: () throws -> Void,
+        validateCurrent: (T) async throws -> Void,
+        validateOriginal: (T) async throws -> Void,
+        activate: () async throws -> Void,
+        restore: (T) async throws -> T
+    ) async throws -> T {
+        func barrier() throws { try Task.checkCancellation(); try check() }
+        try barrier()
+        do {
+            try await validateCurrent(target)
+            try barrier()
+            return target
+        } catch {
+            try barrier()
+        }
+        try await validateOriginal(target)
+        try barrier()
+        try await activate()
+        try barrier()
+        let restored = try await restore(target)
+        try barrier()
+        try await validateCurrent(restored)
+        try barrier()
+        return restored
+    }
+}

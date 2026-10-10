@@ -1,4 +1,5 @@
 import json
+import array
 import struct
 import subprocess
 import sys
@@ -14,7 +15,10 @@ def frame(entries, samples=None):
     for identity, term in entries:
         encoded = term.encode()
         value += identity.encode() + struct.pack('<I', len(encoded)) + encoded
-    return value + struct.pack('<' + 'f' * len(samples), *samples)
+    audio = array.array('f', samples)
+    if sys.byteorder != 'little':
+        audio.byteswap()
+    return value + audio.tobytes()
 
 def run(data):
     p = subprocess.run([worker, 'fixture-model'], input=data, capture_output=True, timeout=5, check=True)
@@ -30,5 +34,6 @@ assert len(run(struct.pack('<II', 4000, 101))) == 1
 assert len(run(struct.pack('<II', 4000, 1) + ids[0].encode() + struct.pack('<I', 257))) == 1
 assert len(run(frame([(ids[0], 'bad\x00word')]))) == 1
 assert len(run(frame([(ids[0], 'José')])[:-4])) == 1
-assert len(run(struct.pack('<II', 1_920_001, 0))) == 1
-print('Passed 10 native worker framing, complete-term budget, UTF8, silence, and state-reset checks (stub decoder)')
+assert len(run(struct.pack('<II', 4_800_001, 0))) == 1
+assert run(frame([], array.array('f', [0.1]) * 4_800_000))[1]['text'] == 'no hints'
+print('Passed 11 native worker framing, five-minute boundary, complete-term budget, UTF8, silence, and state-reset checks (stub decoder)')

@@ -34,6 +34,8 @@ jobs:
         run: bash Scripts/test-shortcut-recorder.sh .test-build/shortcut-recorder --compile-only
       - name: Session and diagnostics regressions
         run: bash Scripts/test-session.sh
+      - name: Settings and login-state regressions
+        run: bash Scripts/test-settings.sh
       - name: Listener recovery and permission diagnostics
         run: bash Scripts/test-permissions.sh
       - name: Custom words and request hints
@@ -49,8 +51,12 @@ jobs:
         run: bash Scripts/test-runtime-setup.sh
       - name: Target inspection cancellation regressions
         run: bash Scripts/test-target-inspector.sh
+      - name: Original destination restoration
+        run: bash Scripts/test-destination-restoration.sh
       - name: Cleanup regressions
-        run: bash Scripts/test-cleanup.sh
+        run: |
+          bash Scripts/test-cleanup.sh
+          bash Scripts/test-cleanup-coordinator.sh
       - name: Owned correction cache regressions
         run: bash Scripts/test-cleanup-service.sh
       - name: Correction lifecycle regressions
@@ -58,11 +64,24 @@ jobs:
       - name: Compile floating indicator fixture
         run: bash Scripts/test-hud.sh .test-build/hud --compile-only
       - name: Audio recovery regressions
-        run: bash Scripts/test-audio.sh
+        run: |
+          bash Scripts/test-audio.sh
+          bash Scripts/test-native-audio.sh
       - name: Cancellation regressions
         run: bash Scripts/test-transcriber.sh
       - name: Worker fault regressions
         run: bash Scripts/test-worker-faults.sh
+      - name: Compile synthetic model benchmark
+        run: |
+          mkdir -p .test-build/upgrade-benchmark/ModuleCache
+          swiftc -O -swift-version 5 -parse-as-library \
+            -module-cache-path .test-build/upgrade-benchmark/ModuleCache \
+            Sources/DictationCore/Vocabulary.swift Sources/DictationCore/RecordingPolicy.swift \
+            Sources/LocalDictation/WhisperTranscriber.swift Sources/LocalDictation/CleanupClient.swift \
+            Sources/LocalDictation/CleanupCoordinator.swift Sources/LocalDictation/LocalCorrectionService.swift \
+            Tests/UpgradeModelBenchmark.swift -framework AVFoundation \
+            -o .test-build/upgrade-benchmark/upgrade-model-benchmark
+          python3 Scripts/generate-upgrade-fixtures.py --validate-only
       - name: Packaging and installer rollback regressions
         run: |
           python3 Tests/PackagingSmoke.py

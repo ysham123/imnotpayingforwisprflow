@@ -1,18 +1,25 @@
 import AVFoundation
+import AudioToolbox
 import Foundation
+#if canImport(DictationCore)
+import DictationCore
+#endif
 
 /// Captures microphone audio only while a dictation session is active. Audio is
 /// resampled to mono 16 kHz in memory and is never written to disk.
 @MainActor
 final class AudioRecorder {
-    static let sampleRate = 16_000.0
-    static let maximumDuration: TimeInterval = 120
+    static let sampleRate = Double(RecordingPolicy.sampleRate)
+    static let maximumDuration: TimeInterval = RecordingPolicy.maximumDuration
 
     private var engine: AVAudioEngine?
     private var session: CaptureSession?
     private var configurationObserver: NSObjectProtocol?
+    private var inputMonitor: AudioInputMonitor?
     private var sessionID: UUID?
     private(set) var isRecording = false
+    private(set) var activeInputName: String?
+    private(set) var inputNotice: String?
     var onAutomaticStop: (() -> Void)?
     /// Raw RMS (0...1), at most ten updates per second; never contains speech.
     var onLevel: ((Float) -> Void)?
@@ -22,10 +29,19 @@ final class AudioRecorder {
         let warning: String?
     }
 
-    func start() throws {
+    func start(inputUID: String? = nil) throws {
         guard !isRecording else { throw RecordingError.alreadyRecording }
+        let resolution = try AudioInputProvider.resolve(uid: inputUID)
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        guard let audioUnit = input.audioUnit else { throw RecordingError.unavailableInput }
+        var deviceID = resolution.device.id
+        let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                                         kAudioUnitScope_Global, 0, &deviceID,
+                                         UInt32(MemoryLayout<UInt32>.size))
+        guard status == noErr else {
+            throw RecordingError.startFailed("The selected microphone could not be opened (\(status)).")
+        }
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate.isFinite, inputFormat.sampleRate > 0,
               inputFormat.channelCount > 0,
@@ -45,7 +61,7 @@ final class AudioRecorder {
             converter: converter,
             outputFormat: outputFormat,
             inputSampleRate: inputFormat.sampleRate,
-            maximumSamples: Int(Self.sampleRate * Self.maximumDuration),
+            maximumSamples: RecordingPolicy.maximumSamples,
             onLevel: { [weak self] level in
                 Task { @MainActor [weak self] in
                     guard let self, self.sessionID == token, self.isRecording else { return }
@@ -74,7 +90,15 @@ final class AudioRecorder {
         self.session = session
         sessionID = token
         isRecording = true
+        activeInputName = resolution.device.name
+        inputNotice = resolution.fallbackNotice
         onLevel?(0)
+        inputMonitor = AudioInputMonitor(deviceID: resolution.device.id) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionID == token, self.isRecording else { return }
+                self.session?.interrupt(.inputChanged)
+            }
+        }
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
         ) { [weak self] _ in
@@ -85,7 +109,7 @@ final class AudioRecorder {
         }
     }
 
-    func stop() throws -> Recording {
+    func stop(reason: String? = nil) throws -> Recording {
         guard let engine, let session, isRecording else { throw RecordingError.notRecording }
         removeConfigurationObserver()
         engine.stop()
@@ -95,7 +119,8 @@ final class AudioRecorder {
         sessionID = nil
         isRecording = false
         onLevel?(0)
-        return try session.finish()
+        let recording = try session.finish()
+        return Recording(samples: recording.samples, warning: recording.warning ?? reason)
     }
 
     func cancel() {
@@ -111,6 +136,7 @@ final class AudioRecorder {
     }
 
     private func removeConfigurationObserver() {
+        inputMonitor = nil
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
         configurationObserver = nil
     }
@@ -132,7 +158,7 @@ final class AudioRecorder {
             case .unavailableInput: return "The microphone has no usable input format. Check your audio input in System Settings."
             case .startFailed(let reason): return "Could not start the microphone: \(reason)"
             case .conversionFailed(let reason): return "Could not process microphone audio: \(reason)"
-            case .recordingTooLong: return "Dictation is limited to 2 minutes. Please record a shorter passage."
+            case .recordingTooLong: return "The 5-minute limit was reached. The speech captured so far was kept."
             case .inputChanged: return "The microphone changed. The speech captured so far was kept."
             case .emptyRecording: return "No microphone audio was captured."
             }

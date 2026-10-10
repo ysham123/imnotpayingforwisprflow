@@ -3,6 +3,14 @@ import AppKit
 /// Uses an isolated native editor and floating surfaces; never types into a user app.
 @main struct HUDSmoke {
     @MainActor static func main() {
+        if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--render-only" {
+            NSApplication.shared.setActivationPolicy(.prohibited)
+            do {
+                try renderOnly(to: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true))
+                print("Rendered isolated HUD states without clicks, editors, microphone, or engine access")
+                exit(0)
+            } catch { fputs("HUD RENDER FAILED: \(error)\n", stderr); exit(1) }
+        }
         if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--check-permission" {
             if CGPreflightPostEventAccess() && AXIsProcessTrusted() { exit(0) }
             fputs("HUD click regression needs Accessibility permission for its runner. No fixture was opened.\n", stderr)
@@ -131,14 +139,54 @@ import AppKit
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    @MainActor static func savePreview(_ hud: DictationHUD, named name: String) throws {
+    @MainActor static func savePreview(_ hud: DictationHUD, named name: String, outputDirectory: URL? = nil) throws {
         guard let view = hud.panel.contentView,
-              let image = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+              let image = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            throw NSError(domain: "Cannot create HUD preview bitmap", code: 1)
+        }
         view.cacheDisplay(in: view.bounds, to: image)
-        guard let data = image.representation(using: .png, properties: [:]) else { return }
-        let output = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent(name)
+        guard let data = image.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "Cannot encode HUD preview PNG", code: 1)
+        }
+        let output = (outputDirectory ?? URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()).appendingPathComponent(name)
         try data.write(to: output)
         print("HUD preview: \(output.path)")
+    }
+
+    /// Renders only our own invisible panel. No event posting, accessibility
+    /// inspection, external editor fixture, capture, or activation is involved.
+    @MainActor static func renderOnly(to output: URL) throws {
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let hud = DictationHUD(announce: { _ in })
+        hud.panel.alphaValue = 0
+        hud.panel.appearance = NSAppearance(named: .aqua)
+        defer { hud.hide() }
+        let states: [(String, DictationHUD.State)] = [
+            ("starting", .starting), ("listening", .listening), ("transcribing", .transcribing),
+            ("correcting-original", .correcting), ("inserting", .inserting), ("ready", .ready),
+            ("inserted", .inserted), ("paste-sent", .pasteSent), ("error", .error),
+            ("failed-recording", .failedRecording)
+        ]
+        for (name, state) in states {
+            hud.allowsOriginal = state == .correcting
+            hud.show(state)
+            if state == .correcting { hud.updateProcessingDetail("Cleaning 2 of 5") }
+            if state == .listening {
+                hud.updateRecording(elapsed: 83, remaining: 217, mode: "Clean", inputName: "Synthetic microphone", notice: nil)
+                hud.updateLevel(0.04)
+            }
+            hud.panel.contentView?.layoutSubtreeIfNeeded()
+            try savePreview(hud, named: "hud-\(name).png", outputDirectory: output)
+        }
+        hud.show(.listening)
+        hud.updateRecording(elapsed: 285, remaining: 15, mode: "Verbatim", inputName: "Synthetic microphone", notice: nil)
+        hud.updateLevel(0.08)
+        try savePreview(hud, named: "hud-countdown.png", outputDirectory: output)
+        hud.updateRecording(elapsed: 10, remaining: 290, mode: "Clean", inputName: "Built-in Microphone",
+                            notice: "Your selected microphone is unavailable. Using Built-in Microphone, the system default.")
+        try savePreview(hud, named: "hud-input-fallback.png", outputDirectory: output)
+        hud.show(.failedRecording, message: "The speech engine stopped responding. Retry your saved recording.")
+        try savePreview(hud, named: "hud-failed-detail.png", outputDirectory: output)
     }
 
     @MainActor static func assertTopmost(_ hud: DictationHUD) async throws {
@@ -236,7 +284,7 @@ import AppKit
         defer { hud.hide() }
         let sourceScreen = DictationHUD.activeScreen
         for state in [DictationHUD.State.starting, .listening, .transcribing, .correcting,
-                      .inserting, .ready, .inserted, .pasteSent, .error] {
+                      .inserting, .ready, .inserted, .pasteSent, .error, .failedRecording] {
             hud.show(state, on: sourceScreen)
             hud.updateLevel(0.2)
             try await Task.sleep(nanoseconds: 35_000_000)
@@ -246,7 +294,7 @@ import AppKit
             try check(hud.panel.contentView!.layer?.cornerRadius == height / 2,
                       "HUD is not a true capsule in state \(state)")
             if [.starting, .listening, .transcribing, .correcting, .inserting].contains(state) {
-                try check(hud.panel.frame.width <= 292 && height <= 50, "Active dictation capsule is oversized")
+                try check(hud.panel.frame.width <= (state == .listening ? 340 : 292) && height <= 56, "Active dictation capsule is oversized")
             }
             if [.listening, .ready, .inserted, .pasteSent].contains(state) {
                 let filename: String
@@ -259,7 +307,7 @@ import AppKit
                 try savePreview(hud, named: filename)
             }
         }
-        print("PASS all nine HUD states preserve external editor and caret")
+        print("PASS all ten HUD states preserve external editor and caret")
         print("PASS each state has capsule geometry and active dictation stays within its compact footprint")
         try check(hud.panel.level == .statusBar && hud.panel.collectionBehavior.contains(.canJoinAllApplications) &&
                   hud.panel.collectionBehavior.contains(.canJoinAllSpaces) &&
@@ -280,6 +328,14 @@ import AppKit
         print("PASS real Copy click keeps the external editor focused")
         try await click("dictation-discard", hud: hud) { discarded == 1 }
         print("PASS real Discard click keeps the external editor focused")
+        var retried = 0, original = 0
+        hud.onRetry = { retried += 1 }
+        hud.onUseOriginal = { original += 1 }
+        hud.show(.failedRecording)
+        try await click("dictation-retry", hud: hud) { retried == 1 }
+        hud.allowsOriginal = true; hud.show(.correcting)
+        try await click("dictation-original", hud: hud) { original == 1 }
+        hud.allowsOriginal = false
         let before = announcements.count
         hud.show(.ready, message: "Insert, copy, or discard your previous text")
         try check(announcements.count == before + 1 &&
@@ -295,6 +351,11 @@ import AppKit
         let beforeMeter = announcements.count
         for value in [Float(0), 0.1, 0.7, 1, 0] { hud.updateLevel(value) }
         try check(announcements.count == beforeMeter, "Audio level updates produced announcements")
+        hud.updateRecording(elapsed: 100, remaining: 200, mode: "Clean", inputName: "Synthetic microphone", notice: nil)
+        try check(announcements.count == beforeMeter, "Elapsed timer produced an announcement")
+        hud.updateRecording(elapsed: 285, remaining: 15, mode: "Clean", inputName: nil, notice: nil)
+        hud.updateRecording(elapsed: 286, remaining: 14, mode: "Clean", inputName: nil, notice: nil)
+        try check(announcements.count == beforeMeter + 1, "Countdown should announce once")
         try await assertEditorRetainedFocus(hud)
         print("PASS changed pending guidance is announced; repeated guidance and meter updates remain silent")
 

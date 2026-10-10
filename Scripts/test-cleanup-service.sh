@@ -6,7 +6,7 @@ mkdir -p "$build_dir/ModuleCache"
 resources=$(mktemp -d "${TMPDIR:-/private/tmp}/localdictation-cleanup-test.XXXXXX")
 trap 'rm -rf "$resources"' EXIT
 cat > "$resources/server.py" <<'PY'
-import http.server, json, pathlib, sys
+import http.server, json, pathlib, sys, time
 root = pathlib.Path(sys.argv[1])
 counts = {'tags': 0, 'show': 0, 'resident': 0, 'temporary': 0, 'unload': 0}
 class Server(http.server.BaseHTTPRequestHandler):
@@ -21,6 +21,7 @@ class Server(http.server.BaseHTTPRequestHandler):
             counts['show'] += 1
             result = {'capabilities': ['completion']}
         else:
+            if (root / 'mode').exists() and (root / 'mode').read_text() == 'delayed': time.sleep(5)
             if body.get('keep_alive') == 0: counts['unload'] += 1
             elif body.get('keep_alive') == -1: counts['resident'] += 1
             else: counts['temporary'] += 1

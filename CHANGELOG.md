@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.1 (unreleased)
+
+- Keep the original verified field and caret attached to a recording when you click, scroll, or switch applications. At delivery, restore that destination when its text and window still match. The original application may come forward to receive the paste.
+- Hold the transcript when the original contents changed, the window disappeared, restoration is unsupported, or new input interrupts delivery. Explicit placement and retry continue to require a freshly selected field.
+- Add headless restoration-order and cancellation regressions plus native fixture cases. Live app compatibility is pending; see [validation](docs/VALIDATION.md).
+
+## 2.0.0 (unreleased)
+
+- Record for up to five minutes with an elapsed timer, microphone meter, and final countdown. Quiet speech windows survive long pauses.
+- Choose Clean or Verbatim mode. Long Clean transcripts use bounded passages with protected numeric phrases, identifiers, links, paths, and quoted/code spans. Use original skips cleanup while it is running.
+- Retry failed recognition from one in-memory recording. Retry results wait for explicit placement; stale destinations are never reused.
+- Added native Settings with General, Audio, Shortcuts, Custom Words, and Advanced sections. Select and test an input device, with a visible fallback when it is unavailable.
+- Added optional open at login using macOS login-item status. Existing preferences, model weights, and shortcuts remain compatible.
+- Export content-free mode, duration, retry, and cleanup fallback measurements.
+
+- Recover local text cleanup in the background after its helper disconnects or times out, while preserving the current raw transcript. Rejected cleanup output does not trigger an engine restart.
+- Protect individual quantity occurrences during cleanup, including repeated amounts and numbers outside a spoken correction. Ambiguous edits fall back to the original transcript.
+
 ## 1.2.0
 
 - Added a compact floating dictation indicator with microphone activity, transcription/correction stages, and clear placement feedback. It leaves keyboard focus with your editor.

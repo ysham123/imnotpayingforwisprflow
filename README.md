@@ -19,9 +19,14 @@
 
 **Click a text box. Double-tap Fn / Globe. Speak. Tap Fn once to finish.**
 
-Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Dictation shortcut → Change…**.
+The latest public release is **v1.3.0**. This branch contains unreleased 2.0
+development work; its newer features and checks are not yet part of the download
+linked above. See the [2.0.1 release-note draft](docs/releases/v2.0.1-draft.md)
+and [validation record](docs/VALIDATION.md) for current results and limits.
 
-Local Dictation is a native menu-bar app that turns speech into text, removes fillers and accidental repetition, and resolves clear spoken corrections before inserting the result. Speech recognition and cleanup run on your Mac. The app downloads its models on first use and reuses them through updates.
+Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Shortcuts → Change shortcut…**.
+
+Local Dictation is a native menu-bar app that turns speech into text. Choose **Clean** to remove fillers and accidental repetition and resolve clear spoken corrections, or **Verbatim** to use the speech recognizer’s transcript directly. Speech recognition and cleanup run on your Mac. The app downloads its models on first use and reuses them through updates.
 
 No subscription, API key, account, or separate Ollama installation is required. No recordings or transcript history are saved.
 
@@ -40,7 +45,7 @@ That example passes the local model checks. Ambiguous speech, names, and numbers
 
 The app installs into **Applications** (`/Applications`) when your account can write there; otherwise it uses your personal **Applications** folder (`~/Applications`). An existing installation is updated in its current location. Quit the old copy before updating. If that location is not writable, the installer explains how to replace it in Finder.
 
-On first launch, Settings shows progress while downloading about **3.4 GB** of models. You can pause and resume the download. Downloads use HTTPS and pinned SHA-256 checksums; incomplete or corrupted files are never loaded. Keep **8 GB free** for model download and recovery. Dictation runs offline after setup.
+On first launch, the setup window shows progress while downloading about **3.4 GB** of models. You can pause and resume the download. Downloads use HTTPS and pinned SHA-256 checksums; incomplete or corrupted files are never loaded. Keep **8 GB free** for model download and recovery. Dictation runs offline after setup.
 
 <p align="center">
   <img src=".github/assets/setup-guide.svg" alt="Setup: open the DMG, choose Install & Open, approve three permissions, then dictate." width="100%" />
@@ -70,7 +75,7 @@ Free ad-hoc updates change the app's code identity, so macOS may require permiss
 
 ### 2. Grant three permissions
 
-The installed app opens **Settings** when setup is needed. Choose **Continue setup** for guided permission requests, or use each permission's direct button. You can reopen **Settings…** from the microphone menu at any time.
+The installed app opens its **setup window** when setup is needed. Choose **Continue setup** for guided permission requests, or use each permission's direct button. You can reopen setup through **Settings… → Advanced → Review setup…**. Ordinary settings stay open when you switch apps.
 
 | Permission | Why it is needed |
 |---|---|
@@ -80,7 +85,7 @@ The installed app opens **Settings** when setup is needed. Choose **Continue set
 
 Enable **Local Dictation itself** in each permission list. If macOS asks you to quit and reopen it, do so.
 
-The permission status updates live. Once ready, the app stays in the menu bar. Closing Settings leaves dictation running. There is no Screen Recording permission requirement.
+The permission status updates live. Once ready, the app stays in the menu bar. Closing setup or Settings leaves dictation running. There is no Screen Recording permission requirement.
 
 ### 3. Choose your dictation shortcut
 
@@ -92,7 +97,7 @@ To keep the default **Fn / Globe** gesture, free up that key in **System Setting
 
 Local Dictation does not change these settings automatically.
 
-For a custom shortcut, open **Settings… → Dictation shortcut → Change…**, then press your preferred combination. Use **Command**, **Control**, or **Option** plus a key; **Shift** can be added. **F1–F20** also work without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts such as Command-C, Command-V, and Command-Tab are rejected. Press Escape or switch to another app to cancel the change.
+For a custom shortcut, open **Settings… → Shortcuts → Change shortcut…**, then press your preferred combination. Use **Command**, **Control**, or **Option** plus a key; **Shift** can be added. **F1–F20** also work without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts such as Command-C, Command-V, and Command-Tab are rejected. Press Escape or switch to another app to cancel the change.
 
 Choose a combination you do not use in other apps. A failed or canceled change leaves your saved choice unchanged. The dictation shortcut pauses while the chooser is open; close it to resume. If the previous shortcut has become unavailable, Settings reports the conflict. Conflict detection cannot identify every shortcut used inside individual apps. The choice is saved locally and restored when you reopen Local Dictation. Choose **Use Fn / Globe** to reset it.
 
@@ -101,13 +106,23 @@ Choose a combination you do not use in other apps. A failed or canceled change l
 With the default Fn / Globe gesture:
 
 1. Wait until the microphone menu says **Ready**, then click the text box where you want your words. Models can take a moment to load on first use.
-2. **Double-tap Fn / Globe** to start. A compact floating pill shows **Listening** and microphone activity. Settings gets out of the way when you begin.
+2. **Double-tap Fn / Globe** to start. A compact floating pill shows **Listening**, elapsed time, and microphone activity. Settings gets out of the way when you begin.
 3. Speak naturally, including corrections such as “Thursday, sorry, Friday.”
-4. **Tap Fn once** to finish. Wait for transcription and cleanup, then check the text.
+4. **Tap Fn once** to finish. Wait for transcription and, in Clean mode, cleanup, then check the text.
 
 With a custom shortcut, **press it once to start and once to finish**. The menu, Settings, and floating indicator show the selected shortcut. Fn / Globe dictation gestures are inactive until you reset to **Use Fn / Globe**.
 
-If you click away or move the cursor, the indicator shows **Text ready**. Click the intended text box and use your selected shortcut: **tap Fn once** with the default gesture, or **press your custom shortcut once**. With Fn / Globe, a short pause distinguishes this single tap from a double-tap. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; it is protected from being overwritten by a new recording.
+Record for up to **five minutes**. The indicator gives a final 15-second countdown and stops automatically at the limit. Long pauses do not end a recording. Transcription begins when you finish; there is no live transcript.
+
+Choose **Settings… → General → Dictation mode** for Clean or Verbatim. Verbatim skips Qwen cleanup; Whisper can still add punctuation or normalize spoken words. During cleanup, **Use original** delivers the recognized transcript immediately. Mode, microphone selection, and custom words are fixed for each recording when it starts.
+
+Choose your microphone in **Settings… → Audio** and use **Test microphone** to check its level. The test stops when you switch apps, close Settings, leave Audio, or start dictation. If a saved microphone is unavailable, the app uses the system default and shows a notice.
+
+If speech recognition fails, **Retry** uses the same recording without asking you to speak again. One failed recording stays in memory until recognition succeeds, you choose **Discard**, or you quit. New recording is blocked while it waits. A successful retry holds text for you to place explicitly.
+
+In the unreleased **2.0.1 development build**, the original verified text box and caret stay attached to your recording when you click elsewhere, scroll, or move the cursor. When the transcript is ready, the app returns to that destination if its contents are unchanged; this can bring the original application forward. Editors that cannot restore focus or selection through Accessibility still require explicit placement. Automated native fixture cases cover restoration; live compatibility in multiple third-party editors remains unverified.
+
+If the original text changed, the destination disappeared, or placement cannot be verified, the indicator shows **Text ready**. Click the intended text box and use your selected shortcut: **tap Fn once** with the default gesture, or **press your custom shortcut once**. With Fn / Globe, a short pause distinguishes this single tap from a double-tap. You can also choose **Copy** or **Discard**. Resolve waiting text before starting another dictation; it is protected from being overwritten by a new recording.
 
 <p align="center">
   <img src=".github/assets/status-ready.png" alt="Text ready. Click a text box, then tap Fn. Copy and Discard buttons." width="392" />
@@ -163,15 +178,17 @@ Cleanup is conservative. Validation rejects reordered content, reassigned number
 
 ## Privacy and control
 
-- **Audio stays in memory.** Normal dictation does not write recording files.
+- **Audio stays in memory.** Normal dictation does not write recording files. A failed recognition retains at most one five-minute recording for Retry; successful recognition, Discard, or quitting releases it.
 - **No transcript history.** One waiting result is protected until you insert, copy, or discard it. A copy backup of the last dispatched result remains until replaced or the app exits. Starting or canceling another recording does not erase that backup.
 - **Local inference.** Audio and text are processed by local models on your Mac; there is no cloud transcription fallback.
 - **Setup downloads.** First-use model downloads contact Hugging Face and Ollama's registry for pinned model files. They receive no dictated audio, transcript, or custom-word list. Models are verified locally before loading.
 - **Saved words stay local.** Custom words are stored in the app's local preferences. They are not automatically learned from other apps.
 - **Temporary clipboard use.** Auto-paste stages the result and restores the previous clipboard if nothing else has copied in the meantime. Some applications' promised/lazy clipboard formats may not restore exactly.
-- **Local performance measurements.** The last 100 session timings stay in memory. Export them explicitly from the microphone menu; they contain no audio, transcript, or application names.
+- **Local performance measurements.** The last 100 session timings, selected mode, audio duration, retry state, and cleanup progress/fallback categories stay in memory. Export them explicitly from the microphone menu; they contain no audio, transcript, or application names.
 - **Local permission diagnostics.** A bounded readiness log contains app path/signature metadata and permission/listener states. It excludes recorded audio, transcripts, typed keys, target-app names, and custom words. Export it explicitly if you need help; the installation path can contain your macOS username.
 - **Your destination still matters.** Once text is inserted into another app, that app's own storage and privacy behavior applies.
+
+**Settings…** has General, Audio, Shortcuts, Custom Words, and Advanced sections. **Open at login** is optional and off by default; Settings reports macOS’s actual login-item status.
 
 The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting text**, **Retry local engines**, **Retry shortcut listener**, and explicit diagnostic exports. Copy last result intentionally replaces the clipboard.
 
@@ -181,23 +198,24 @@ The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting 
 |---|---|
 | Fn does nothing | Open Settings, check the exact status, and remove competing Fn shortcuts. If permissions are allowed but the listener failed, choose **Retry shortcut listener**. |
 | Fn does nothing on an external keyboard | Try the Mac's built-in Fn / Globe key. Some third-party keyboards handle Fn internally and do not send an event macOS can detect. |
-| Custom shortcut is rejected or already registered | Choose another combination, or close the chooser to resume your saved shortcut. If that shortcut is unavailable, choose another or reset with **Settings… → Use Fn / Globe**. |
+| Custom shortcut is rejected or already registered | Choose another combination, or close the chooser to resume your saved shortcut. If that shortcut is unavailable, choose another or reset with **Settings… → Shortcuts → Use Fn / Globe**. |
 | Custom shortcut also triggers an action in another app | Choose an unused combination. Registration conflict checks cannot detect every app-specific shortcut. |
 | A function-key shortcut changes brightness, volume, or another media control | Configure your keyboard to send the corresponding F-key event rather than a media action. |
 | Permissions need renewal after an update | Quit the app and approve the current installed copy in Privacy & Security. Ad-hoc updates can invalidate old grants; a stale entry may need removal and re-addition after that update. |
 | Permissions are lost after an unchanged relaunch | Check that only the installed copy is running. Export permission diagnostics and report it; repeated removal/re-addition should not be the normal launch workflow. |
 | All permissions are allowed, but the listener cannot start | Choose **Retry shortcut listener**. A shortcut conflict, event-tap failure, and run-loop failure have separate messages. |
 | Text ready | Click the intended text box and use your selected shortcut once. If the field cannot be verified, choose **Copy** and paste manually. |
-| The cursor or text field changed | Your text waits. Select its destination and use the placement shortcut, or copy/discard it. |
+| The original destination changed | The 2.0.1 development build restores an unchanged field and caret where supported. Changed text or an unavailable field keeps your transcript waiting for explicit placement. |
 | “Paste sent” | Check the field before pasting again. The app could not confirm the result and does not retry automatically. |
-| Correction is unavailable | Dictation can use the raw transcript. Use **Retry local engines** to retry correction startup. |
-| Microphone changed or recording stopped | Captured speech is retained when possible and processed; the status explains the interruption. |
+| Correction is unavailable | The current dictation uses the original transcript while cleanup recovers in the background. Verbatim mode does not require cleanup. |
+| Recording saved | Choose **Retry** to transcribe the retained audio, or **Discard** to release it and record again. |
+| Microphone changed or recording stopped | Captured speech is processed when possible; the status explains the interruption. Select an available input in Settings → Audio for the next recording. |
 | Model download is interrupted | Reopen Settings and choose **Resume model setup**. Verified files are reused and partial downloads can resume. |
 | Another copy is already running | Quit the existing copy before updating. For normal use, open the installed app in Applications. |
 | A custom word is not used | Check its preferred spelling and saved alias. Recognition hints have limited space; **Cleanup only** applies after a matching alias is recognized. |
 | Signature verification reports “resource fork” or Finder metadata | Install into the default local Applications folder. iCloud or other synced destinations can add metadata that invalidates the bundle. |
 
-The creator confirmed v1.3 dictation in Chrome in normal and full-screen mode, including listening-pill visibility and completion dismissal after three unchanged app restarts. Earlier version 1.1.1 was manually checked in Claude and ChatGPT desktop text boxes. The current source also passes insertion checks across native AppKit, WKWebView, and Electron fixtures, including rich editors, delayed clipboard reads, and protected controls. Compatibility varies by app and editor; see the [validation record](docs/VALIDATION.md) for tested versions and limits. Opaque fields keep text waiting; Copy remains available when explicit placement cannot verify them. Terminal panes are not validated, and multiline terminal paste can execute commands depending on terminal settings.
+The creator confirmed v1.3 dictation in Chrome in normal and full-screen mode, including listening-pill visibility and completion dismissal after three unchanged app restarts. Earlier version 1.1.1 was manually checked in Claude and ChatGPT desktop text boxes. Earlier insertion suites passed across native AppKit, WKWebView, and Electron fixtures, including rich editors, delayed clipboard reads, and protected controls. The 2.0.1 restoration change has automated fixture coverage but still needs live checks in third-party editors. Compatibility varies by app and editor; see the [validation record](docs/VALIDATION.md) for tested versions and limits. Opaque fields keep text waiting; Copy remains available when explicit placement cannot verify them. Terminal panes are not validated, and multiline terminal paste can execute commands depending on terminal settings.
 
 Rich editors can update their accessibility text after the paste has already appeared. The app observes the original editor for up to 2.5 seconds and keeps the staged clipboard available during that window. If it still cannot confirm insertion, it reports **Paste sent** and keeps **Copy last result** available. An unchanged accessibility value does not prove that paste failed; check the visible field before inserting the result again. A new recording can begin after paste dispatch while this clipboard cleanup finishes; any subsequent paste waits for the previous transaction.
 

@@ -12,7 +12,7 @@ import AppKit
         setbuf(stdout, nil)
         app.setActivationPolicy(.prohibited)
         Task { @MainActor in
-            do { try await run(); print("Passed 15 native insertion/clipboard regression groups"); exit(0) }
+            do { try await run(); print("Passed 19 native insertion/clipboard regression groups"); exit(0) }
             catch { fputs("INSERTION TEST FAILED: \(error)\n", stderr); exit(1) }
         }
         app.run()
@@ -220,6 +220,58 @@ import AppKit
         try check((returnedReply["values"] as! [String])[0] == "return origin")
         try check((returnedReply["pasteCounts"] as! [Int])[0] == 0, "Away-and-return dispatched a paste")
         print("PASS focus-away-return epoch invalidates the original target")
+
+        func pinnedCapture() async throws -> TextInserter.Target {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            guard let anchor = inserter.beginCapture(expectedProcessIdentifier: fixturePID, preserveDestination: true) else {
+                throw NSError(domain: "Original destination anchor missing", code: 1)
+            }
+            return try await inserter.inspect(anchor)
+        }
+        try await seed("keep other field", location: 16, field: 1)
+        try await seed("before wrong after", location: 7, length: 5)
+        let originalField = try await pinnedCapture()
+        _ = try await command(["field": 1, "focus": true])
+        inserter.invalidateCapture() // Earlier physical click/scroll activity.
+        let originalResult = try await inserter.insert(text: "right", into: originalField)
+        let originalReply = try await command([:])
+        try check(originalResult == .verified, "Original destination was not restored")
+        try check((originalReply["values"] as! [String])[0] == "before right after")
+        try check((originalReply["values"] as! [String])[1] == "keep other field")
+        try check((originalReply["pasteCounts"] as! [Int])[0] == 1 && (originalReply["pasteCounts"] as! [Int])[1] == 0)
+        print("PASS pinned original field and selected range survive focus and input activity")
+
+        try await seed("🙂 café end", location: 8)
+        let originalCaret = try await pinnedCapture()
+        _ = try await command(["location": 0])
+        inserter.invalidateCapture()
+        let caretResult = try await inserter.insert(text: "TEST ", into: originalCaret)
+        let pinnedCaretReply = try await command([:])
+        try check(caretResult == .verified && (pinnedCaretReply["values"] as! [String])[0] == "🙂 café TEST end")
+        print("PASS pinned Unicode caret survives a later caret move")
+
+        try await seed("scroll origin", location: 13)
+        let scrolled = try await pinnedCapture()
+        inserter.invalidateCapture()
+        inserter.invalidateCapture()
+        let scrollResult = try await inserter.insert(text: " done", into: scrolled)
+        let scrollReply = try await command([:])
+        try check(scrollResult == .verified && (scrollReply["values"] as! [String])[0] == "scroll origin done")
+        print("PASS earlier scrolling does not invalidate an unchanged pinned field")
+
+        try await seed("original", location: 8)
+        let editedOriginal = try await pinnedCapture()
+        _ = try await command(["value": "edited by user", "location": 14])
+        _ = try await command(["field": 1, "focus": true])
+        let beforeEditedDelivery = clipboardBytes()
+        do {
+            try await inserter.insert(text: "must not paste", into: editedOriginal)
+            throw NSError(domain: "Edited original accepted", code: 1)
+        } catch TextInserter.InsertionError.targetChanged { }
+        let editedReply = try await command([:])
+        try check((editedReply["values"] as! [String])[0] == "edited by user")
+        try check((editedReply["pasteCounts"] as! [Int])[0] == 0 && clipboardBytes() == beforeEditedDelivery)
+        print("PASS edited original is held without changing text or clipboard")
 
         try await seed("", location: 0)
         let firstTarget = try capture()

@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "voice": "Samantha",
+  "rate": 175,
+  "vocabulary": [
+    {"preferred": "userId", "aliases": ["user ID", "user I D"]},
+    {"preferred": "cacheKey", "aliases": ["cache key"]},
+    {"preferred": "LumaForge", "aliases": ["Luma Forge", "Looma Forge"]},
+    {"preferred": "Project Meridian", "aliases": ["project meridian"]}
+  ],
+  "passages": {
+    "short": {
+      "text": "Use five, sorry, six reports. Do not delete user ID.",
+      "markers": [
+        {"group": "amounts", "pattern": "\\b(?:5|five)\\b", "raw": 1, "clean": 0},
+        {"group": "amounts", "pattern": "\\b(?:6|six)\\b", "raw": 1, "clean": 1},
+        {"group": "identifiers", "pattern": "\\buserId\\b", "raw": 1, "clean": 1, "caseSensitive": true},
+        {"group": "negation", "pattern": "\\b(?:do not|don't) delete\\b", "raw": 1, "clean": 1},
+        {"group": "canonical", "pattern": "\\b(?:6|six) reports\\b", "raw": 1, "clean": 1}
+      ]
+    },
+    "review": {
+      "text": "Please keep the review notes for Project Meridian. We need twelve printed copies for the planning meeting, and the copies should stay beside the blue folder. Do not delete user ID from the example request. The team can discuss the draft after lunch. Leave the original wording available so the next reviewer can compare the revised paragraph with the earlier version.",
+      "markers": [
+        {"group": "amounts", "pattern": "\\b(?:12|twelve)\\b", "raw": 1, "clean": 1},
+        {"group": "identifiers", "pattern": "\\buserId\\b", "raw": 1, "clean": 1, "caseSensitive": true},
+        {"group": "negation", "pattern": "\\b(?:do not|don't) delete\\b", "raw": 1, "clean": 1},
+        {"group": "vocabulary", "pattern": "\\bProject Meridian\\b", "raw": 1, "clean": 1, "caseSensitive": true},
+        {"group": "canonical", "pattern": "\\bkeep the review notes\\b", "raw": 1, "clean": 1}
+      ]
+    },
+    "storage": {
+      "text": "The storage checklist has twenty seven entries for Luma Forge. Keep cache key unchanged while checking the saved example. Never remove the backup folder during this review. Read the instructions before comparing the filenames, and place the completed checklist beside the printer. The final note should explain which files were checked and which files still need attention from another person.",
+      "markers": [
+        {"group": "amounts", "pattern": "\\b(?:27|twenty[ -]seven)\\b", "raw": 1, "clean": 1},
+        {"group": "identifiers", "pattern": "\\bcacheKey\\b", "raw": 1, "clean": 1, "caseSensitive": true},
+        {"group": "negation", "pattern": "\\bnever remove the backup folder\\b", "raw": 1, "clean": 1},
+        {"group": "vocabulary", "pattern": "\\bLumaForge\\b", "raw": 1, "clean": 1, "caseSensitive": true},
+        {"group": "canonical", "pattern": "\\bcompleted checklist\\b", "raw": 1, "clean": 1}
+      ]
+    },
+    "meeting": {
+      "text": "Reserve four seats for the afternoon review of Project Meridian. The facilitator will bring the agenda and ask everyone to read the summary before discussing the proposal. Do not change the meeting location. Put the reference diagrams beside the agenda, then leave space for handwritten comments. Keep the discussion focused on the open questions and write down any decisions before leaving the room.",
+      "markers": [
+        {"group": "amounts", "pattern": "\\b(?:4|four)\\b", "raw": 1, "clean": 1},
+        {"group": "negation", "pattern": "\\b(?:do not|don't) change the meeting location\\b", "raw": 1, "clean": 1},
+        {"group": "vocabulary", "pattern": "\\bProject Meridian\\b", "raw": 1, "clean": 1, "caseSensitive": true},
+        {"group": "canonical", "pattern": "\\bhandwritten comments\\b", "raw": 1, "clean": 1}
+      ]
+    },
+    "handoff": {
+      "text": "The handoff includes eighteen diagrams for Luma Forge. Keep the diagrams in their current order and do not remove the labels from the example images. The next reviewer should be able to follow the explanation without opening another document. Add a brief note about the remaining questions, then leave the marked copy in the shared review folder before the afternoon meeting begins.",
+      "markers": [
+        {"group": "amounts", "pattern": "\\b(?:18|eighteen)\\b", "raw": 1, "clean": 1},
+        {"group": "negation", "pattern": "\\b(?:do not|don't) remove the labels\\b", "raw": 1, "clean": 1},
+        {"group": "vocabulary", "pattern": "\\bLumaForge\\b", "raw": 1, "clean": 1, "caseSensitive": true},
+        {"group": "canonical", "pattern": "\\bcurrent order\\b", "raw": 1, "clean": 1}
+      ]
+    }
+  },
+  "cases": [
+    {"id": 101, "name": "short", "targetSeconds": null, "quietPause": false, "parts": [{"passage": "short", "pauseAfter": 0}]},
+    {"id": 130, "name": "thirty_seconds", "targetSeconds": 30, "quietPause": false, "parts": [{"passage": "review", "pauseAfter": 0}]},
+    {"id": 220, "name": "two_minutes", "targetSeconds": 120, "quietPause": false, "parts": [{"passage": "review", "pauseAfter": 2}, {"passage": "storage", "pauseAfter": 2}, {"passage": "meeting", "pauseAfter": 2}, {"passage": "handoff", "pauseAfter": 0}]},
+    {"id": 500, "name": "five_minutes", "targetSeconds": 300, "quietPause": false, "parts": [{"passage": "review", "pauseAfter": 2}, {"passage": "storage", "pauseAfter": 2}, {"passage": "meeting", "pauseAfter": 2}, {"passage": "handoff", "pauseAfter": 2}, {"passage": "review", "pauseAfter": 2}, {"passage": "storage", "pauseAfter": 2}, {"passage": "meeting", "pauseAfter": 2}, {"passage": "handoff", "pauseAfter": 2}, {"passage": "review", "pauseAfter": 2}, {"passage": "storage", "pauseAfter": 0}]},
+    {"id": 221, "name": "quiet_pauses", "targetSeconds": 120, "quietPause": true, "parts": [{"passage": "review", "pauseAfter": 15}, {"passage": "storage", "pauseAfter": 15}, {"passage": "meeting", "pauseAfter": 15}, {"passage": "handoff", "pauseAfter": 0}]}
+  ]
+}

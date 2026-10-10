@@ -9,7 +9,7 @@ fi
 build_dir="$source_dir/.test-build/real-cleanup"
 mkdir -p "$build_dir/ModuleCache"
 flags=(-swift-version 5)
-sources=("$source_dir/Sources/DictationCore/Vocabulary.swift"
+sources=("$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/DictationCore/RecordingPolicy.swift"
          "$source_dir/Sources/LocalDictation/CleanupClient.swift"
          "$source_dir/Sources/LocalDictation/WhisperTranscriber.swift"
          "$source_dir/Sources/LocalDictation/LocalCorrectionService.swift"

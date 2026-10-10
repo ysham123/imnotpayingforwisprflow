@@ -3,6 +3,11 @@ import CoreGraphics
 import DictationCore
 import Carbon
 
+private var effectiveDoubleClickInterval: TimeInterval {
+    let systemInterval = NSEvent.doubleClickInterval
+    return systemInterval.isFinite && systemInterval > 0 ? systemInterval : 0.5
+}
+
 enum ShortcutRegistrationError: LocalizedError, Equatable {
     case invalid(String)
     case inUse(String)
@@ -73,7 +78,7 @@ final class FnHotkey {
     private let environment: ListenerEnvironment
     init(environment: ListenerEnvironment? = nil) { self.environment = environment ?? .live }
 
-    private var gesture = FnKeyEventMapper(doubleTapInterval: NSEvent.doubleClickInterval)
+    private var gesture = FnKeyEventMapper(doubleTapInterval: effectiveDoubleClickInterval)
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var onAction: ((HotkeyGesture.Action) -> Void)?
@@ -163,7 +168,7 @@ final class FnHotkey {
         carbonID = candidateID
         configuration = proposed
         carbonAcceptEventsAfter = ProcessInfo.processInfo.systemUptime
-        gesture = FnKeyEventMapper(doubleTapInterval: NSEvent.doubleClickInterval)
+        gesture = FnKeyEventMapper(doubleTapInterval: effectiveDoubleClickInterval)
         gesture.setPhase(phase, at: ProcessInfo.processInfo.systemUptime)
         customGesture = CustomHotkeyGesture()
         customGesture.setPhase(phase, at: ProcessInfo.processInfo.systemUptime)
@@ -260,7 +265,7 @@ final class FnHotkey {
         runLoopSource = nil
         eventTap = nil
         onAction = nil
-        gesture = FnKeyEventMapper(doubleTapInterval: NSEvent.doubleClickInterval)
+        gesture = FnKeyEventMapper(doubleTapInterval: effectiveDoubleClickInterval)
         customGesture = CustomHotkeyGesture()
         carbonReleasePending = false
         awaitingArmRelease = false
@@ -366,7 +371,7 @@ final class FnHotkey {
         onInputActivity?()
         // Missing a key-up while disabled must not leave a partial gesture.
         let phase = gesture.phase
-        gesture = FnKeyEventMapper(doubleTapInterval: NSEvent.doubleClickInterval)
+        gesture = FnKeyEventMapper(doubleTapInterval: effectiveDoubleClickInterval)
         gesture.setPhase(phase, at: ProcessInfo.processInfo.systemUptime)
         customGesture = CustomHotkeyGesture()
         customGesture.setPhase(phase, at: ProcessInfo.processInfo.systemUptime)

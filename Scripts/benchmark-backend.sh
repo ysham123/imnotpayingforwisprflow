@@ -20,6 +20,6 @@ if [ -n "${6:-}" ] && [ "$6" != '-' ]; then
   flags+=(-D BASELINE)
 fi
 swiftc -O -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "${flags[@]}" "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_path/WhisperTranscriber.swift" "$source_path/CleanupClient.swift" \
+  "${flags[@]}" "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/DictationCore/RecordingPolicy.swift" "$source_path/WhisperTranscriber.swift" "$source_path/CleanupClient.swift" \
   "$source_dir/Tests/BackendBenchmark.swift" -framework AVFoundation -o "$build_dir/backend-benchmark"
 "$build_dir/backend-benchmark" "$runtime" "$fixture" "$report" "$runs" "$idle_seconds" "$warm_runs"

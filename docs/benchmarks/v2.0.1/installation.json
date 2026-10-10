@@ -1,0 +1,11 @@
+{
+  "version": "2.0.1",
+  "build": 11,
+  "installed": true,
+  "filesMatched": 74,
+  "rollbackVersion": "2.0.0",
+  "rollbackFilesMatched": 74,
+  "executableSHA256": "4112fafff923379810593317fc645fb8b621895630c7c2922398ee1a257349da",
+  "signatureVerified": true,
+  "resignedDuringInstallation": false
+}

@@ -40,6 +40,7 @@ class Server(http.server.BaseHTTPRequestHandler):
         else:
             prompt = body.get('prompt','')
             source = json.loads(prompt[prompt.find('{'):prompt.rfind('}')+1])['dictated_text'] if '{' in prompt else ''
+            if (root / 'reject-output').exists(): source = 'Delete the file.'
             result = {'done':True,'response':json.dumps({'cleaned_text':source})}
         data = json.dumps(result).encode()
         self.send_response(200); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
@@ -48,7 +49,7 @@ http.server.HTTPServer(('127.0.0.1',port),Server).serve_forever()
 PY
 chmod +x "$resources/ollama"
 swiftc -swift-version 5 -parse-as-library -module-cache-path "$build_dir/ModuleCache" \
-  "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/LocalDictation/CleanupClient.swift" \
+  "$source_dir/Sources/DictationCore/Vocabulary.swift" "$source_dir/Sources/DictationCore/RecordingPolicy.swift" "$source_dir/Sources/LocalDictation/CleanupClient.swift" \
   "$source_dir/Sources/LocalDictation/WhisperTranscriber.swift" \
   "$source_dir/Sources/LocalDictation/LocalCorrectionService.swift" \
   "$source_dir/Tests/CorrectionLifecycleSmoke.swift" -o "$build_dir/lifecycle-smoke"

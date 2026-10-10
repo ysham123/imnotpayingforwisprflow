@@ -1,0 +1,18 @@
+{
+  "applicationConstraintDiffersFromSecurity": true,
+  "applicationConstraintMatchesCodesign": true,
+  "policy": "CodeSigning",
+  "ruleCount": 1,
+  "scope": "user",
+  "certificateSHA256": "424F911736B76983877C7C18077DFBF907B863D0979DAE373E16012020EE0BF9",
+  "signingFixtureGroupsPassed": 4,
+  "differentCompiledBuildsShareRequirement": true,
+  "wrongIdentifierRejected": true,
+  "adHocImpersonationRejected": true,
+  "sealedResourceTamperingRejected": true,
+  "installedCandidateVerified": true,
+  "permissionRetentionVerified": true,
+  "permissionRetentionScope": "One quit-and-reopen of installed 2.0.1 build 11 after completing setup",
+  "postRestartReadinessDate": "2026-10-09T22:39:32Z",
+  "postRestartListenerActive": true
+}

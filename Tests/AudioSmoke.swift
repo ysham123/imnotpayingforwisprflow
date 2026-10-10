@@ -58,6 +58,29 @@ import Foundation
         let loud: [Float] = [-2, 2]
         precondition(loud.withUnsafeBufferPointer { finiteMeter.consume($0) } == 1, "Meter exceeds its range")
         print("PASS level meter sanitizes nonfinite and overrange inputs")
-        print("Passed 8 audio recovery and level regressions")
+        precondition(AudioRecorder.maximumDuration == 300 && AudioRecorder.sampleRate == 16_000)
+        let fiveMinutes = session(rate: 16_000, channels: 1, maximum: RecordingPolicy.maximumSamples)
+        let oneSecond = buffer(rate: 16_000, channels: 1, frames: 16_000)
+        for _ in 0..<301 { fiveMinutes.capture(oneSecond) }
+        let complete = try fiveMinutes.finish()
+        precondition(complete.samples.count == 4_800_000 && complete.warning?.contains("5-minute") == true)
+        print("PASS five-minute cap preserves exactly 4,800,000 samples and ignores overflow")
+        let builtIn = AudioInputDevice(id: 1, uid: "builtin", name: "Built-in Microphone")
+        let usb = AudioInputDevice(id: 2, uid: "usb", name: "USB Microphone")
+        let inputs = [builtIn, usb]
+        let system = try AudioInputProvider.resolve(uid: nil, available: inputs, defaultID: 1)
+        precondition(system.device == builtIn && system.fallbackNotice == nil)
+        let explicit = try AudioInputProvider.resolve(uid: "usb", available: inputs, defaultID: 1)
+        precondition(explicit.device == usb && explicit.fallbackNotice == nil)
+        let absent = try AudioInputProvider.resolve(uid: "disconnected", available: inputs, defaultID: 1)
+        precondition(absent.device == builtIn && absent.fallbackNotice?.contains(builtIn.name) == true)
+        let withoutDefault = try AudioInputProvider.resolve(uid: "usb", available: inputs, defaultID: nil)
+        precondition(withoutDefault.device == usb)
+        do {
+            _ = try AudioInputProvider.resolve(uid: "disconnected", available: inputs, defaultID: nil)
+            fatalError("An absent microphone silently selected an arbitrary device")
+        } catch AudioRecorder.RecordingError.unavailableInput { }
+        print("PASS system input, stable UID, fallback notice, and absent input resolution")
+        print("Passed 10 audio recovery, capture-boundary, level, and device-resolution regressions")
     }
 }
