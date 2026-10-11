@@ -5,13 +5,13 @@
 <h1 align="center">I'm not paying for Wispr Flow.</h1>
 <p align="center"><strong>Local voice dictation for your Mac. Free to use. Yours to build on.</strong></p>
 <p align="center">
-  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/latest"><img alt="Download release" src="https://img.shields.io/github/v/release/ysham123/imnotpayingforwisprflow?style=flat-square&amp;color=52c98c&amp;label=download" /></a>
+  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.1.0"><img alt="Public preview 2.1.0" src="https://img.shields.io/badge/preview-v2.1.0-245be8?style=flat-square" /></a>
   <img alt="macOS 14 or newer" src="https://img.shields.io/badge/macOS-14%2B-202c28?style=flat-square" />
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple_Silicon-M1_or_newer-202c28?style=flat-square" />
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-202c28?style=flat-square" /></a>
 </p>
 <p align="center">
-  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/latest/download/Local-Dictation.dmg"><strong>↓ Download for Mac</strong></a>
+  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.1.0/Local-Dictation.dmg"><strong>↓ Download 2.1.0 preview for Mac</strong></a>
   &nbsp;·&nbsp; <a href="#get-started">Get started</a>
   &nbsp;·&nbsp; <a href="#what-runs-under-the-hood">How it works</a>
   &nbsp;·&nbsp; <a href="docs/DEVELOPMENT.md">Build from source</a>
@@ -19,13 +19,9 @@
 
 **Click a text box. Double-tap Fn / Globe. Speak. Tap Fn once to finish.**
 
-The latest public release is **v2.0.1**, with Clean and Verbatim modes,
-five-minute recording, microphone selection, recording retry, native Settings,
-and restoration of the original text box and caret where supported. See the
-[2.0.1 release notes](docs/releases/v2.0.1.md) and
-[validation record](docs/VALIDATION.md) for results and compatibility limits.
+**v2.1.0 is a public preview** with Developer ID signing, Apple notarization, a native app icon, and the familiar drag-to-Applications installer. Its new [guided setup](docs/GUIDED-SETUP.md) walks through permissions, local models, a shortcut check, and practice dictation. See the [2.1.0 preview release notes](docs/releases/v2.1.0.md).
 
-A [guided setup candidate for 2.1.0](docs/GUIDED-SETUP.md) has Developer ID signing, Apple notarization, a native app icon, and a standard drag-to-Applications disk image. Fresh-Mac onboarding validation and publication are still pending. The public download above remains v2.0.1.
+Signing, notarization, packaging, and automated macOS checks pass. A complete first-time setup on a Mac that has never used Local Dictation is still unverified. The latest stable release remains [v2.0.1](https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.0.1); its download uses the earlier ad-hoc installation flow. Editor compatibility limits are recorded in [VALIDATION.md](docs/VALIDATION.md).
 
 Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Shortcuts → Change shortcut…**.
 
@@ -44,14 +40,14 @@ That example passes the local model checks. Ambiguous speech, names, and numbers
 
 ### 1. Install
 
-[**Download Local-Dictation.dmg**](https://github.com/ysham123/imnotpayingforwisprflow/releases/latest/download/Local-Dictation.dmg), open it, and open **Local Dictation.app** inside. Choose **Install & Open**. No Terminal or developer tools are needed.
+[**Download the 2.1.0 preview DMG**](https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.1.0/Local-Dictation.dmg), open it, and drag **Local Dictation** onto the **Applications** folder beside it. Eject the disk image, then open Local Dictation from Applications. No Terminal or developer tools are needed.
 
-The app installs into **Applications** (`/Applications`) when your account can write there; otherwise it uses your personal **Applications** folder (`~/Applications`). An existing installation is updated in its current location. Quit the old copy before updating. If that location is not writable, the installer explains how to replace it in Finder.
+For an update, finish any dictation and quit the old app first. Choose **Replace** if Finder asks. Models already stored in Application Support and saved preferences are reused.
 
 On first launch, the setup window shows progress while downloading about **3.4 GB** of models. You can pause and resume the download. Downloads use HTTPS and pinned SHA-256 checksums; incomplete or corrupted files are never loaded. Keep **8 GB free** for model download and recovery. Dictation runs offline after setup.
 
 <p align="center">
-  <img src=".github/assets/setup-guide.svg" alt="Setup: open the DMG, choose Install & Open, approve three permissions, then dictate." width="100%" />
+  <img src=".github/assets/setup-guide.svg" alt="Setup: open the DMG, drag to Applications, approve permissions, then try dictation." width="100%" />
 </p>
 
 | Requirement | Supported release |
@@ -63,22 +59,24 @@ On first launch, the setup window shows progress while downloading about **3.4 G
 | Network | Needed to download; dictation runs locally afterward |
 | Developer tools | None needed |
 
-> **Community release:** the app is ad-hoc signed and is not notarized by Apple. macOS may block the first launch. After trying to open it, use **System Settings → Privacy & Security → Open Anyway** if you trust this release, then confirm Open. Follow [Apple's opening guidance](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac). Installation preserves macOS quarantine and does not disable Gatekeeper. This is a short native setup flow, not literally a single click.
+> **Signed and notarized preview:** macOS may ask you to confirm **Open** the first time. Microphone, Accessibility, and Input Monitoring approvals are still required. The download preserves quarantine and does not disable Gatekeeper. Initial setup downloads about 3.4 GB of models. Fresh-Mac onboarding is still being validated.
+
 
 <details>
 <summary>Updating from v1.2, model storage, and offline use</summary>
 
-The installer verifies and migrates compatible models from the existing app before replacing it. Saved shortcuts and custom words remain local and survive updates. Replacement stages and verifies the new copy first, retains a rollback copy until final verification, and refuses to replace a running app.
+Saved shortcuts and custom words remain local and survive updates. Models live outside the signed app at `~/Library/Application Support/Local Dictation/Models`, so updates reuse unchanged verified weights. For a direct upgrade from v1.2, keep a backup of the old app until setup finishes; its formerly bundled models may need to download again.
 
-Models are stored outside the signed app at `~/Library/Application Support/Local Dictation/Models`. Future app updates reuse unchanged, verified weights. The bundled runtime stays in the app, so no separate Ollama installation is required. For an offline Mac, complete setup on that Mac while connected first. The [v1.2 offline installer](https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v1.2.0) remains available for its historical release.
+The bundled runtime needs no separate Ollama installation. For an offline Mac, complete setup while connected first. The [v1.2 offline installer](https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v1.2.0) remains available for its historical release.
 
-Free ad-hoc updates change the app's code identity, so macOS may require permission approval again after an update. The installer never re-signs the app. An unchanged quit/reopen should retain permissions; see troubleshooting if it does not. We have not validated self-signed publisher certificates as a reliable replacement for Developer ID privacy permissions on recipient Macs.
+The transition from an ad-hoc or creator self-signed build to Developer ID may require renewed permissions. Retention across later Developer ID updates has not yet been tested. The installer never re-signs the app or changes certificate trust.
+
 
 </details>
 
 ### 2. Grant three permissions
 
-The installed app opens its **setup window** when setup is needed. Choose **Continue setup** for guided permission requests, or use each permission's direct button. You can reopen setup through **Settings… → Advanced → Review setup…**. Ordinary settings stay open when you switch apps.
+The installed app opens its **setup window** when setup is needed. Choose **Start setup** and follow the permission walkthrough. You can reopen setup through **Settings… → Advanced → Review setup…**. Ordinary settings stay open when you switch apps.
 
 | Permission | Why it is needed |
 |---|---|
@@ -88,7 +86,7 @@ The installed app opens its **setup window** when setup is needed. Choose **Cont
 
 Enable **Local Dictation itself** in each permission list. If macOS asks you to quit and reopen it, do so.
 
-The permission status updates live. Once ready, the app stays in the menu bar. Closing setup or Settings leaves dictation running. There is no Screen Recording permission requirement.
+Complete the shortcut check and practice dictation inside setup. The permission status updates live. Once ready, the app stays in the menu bar. Closing setup or Settings leaves dictation running. There is no Screen Recording permission requirement.
 
 ### 3. Choose your dictation shortcut
 

@@ -1,6 +1,6 @@
 # Developer ID distribution
 
-The public download is still v2.0.1. A local v2.1.0 candidate is Developer ID signed with secure timestamps and hardened runtime. Both signed helpers initialized their cached models on the creator's Mac. Apple accepted the app and DMG with no reported issues; tickets are stapled and Gatekeeper checks pass. The new drag-to-Applications disk image was visually checked in Finder. A real copy into an isolated temporary folder preserved the notarized app. A fresh-Mac permission/download/practice run and publication remain pending. Do not change public download links until the final artifact is published and verified.
+The 2.1.0 public preview uses Developer ID signing, secure timestamps, hardened runtime, and stapled Apple notarization tickets for the app and disk image. Both helpers initialized cached models on the creator's Mac. Gatekeeper checks pass, the drag-to-Applications layout was checked in Finder, and a real copy into a temporary Applications folder preserved the app signature and ticket. A complete fresh-Mac permission/download/practice run remains unverified, so 2.0.1 stays the latest stable release. See the [preview release notes](releases/v2.1.0.md).
 
 ## Signing
 
@@ -53,6 +53,6 @@ This verifies the notarized app before packaging, requires the bundled app icon,
 
 Signing and stapling change the DMG bytes. Recompute the DMG asset size and SHA-256 in `release-manifest.json`, mark disk-image notarization Accepted only after ticket/Gatekeeper checks, and regenerate all `SHA256SUMS` entries from the final files. Verify the app installed from that final DMG, permissions, model download or reuse, shortcut detection, practice, and external insertion. A fixture render does not establish fresh-Mac readiness.
 
-Before publication verify the source commit, CI, clean release tree, final signatures, both tickets, manifest/checksum consistency, and installation behavior. After publishing verify GitHub's release is public and the downloaded asset matches the local digest. Update the website and stable documentation only then.
+Before publication verify the source commit, CI, clean release tree, final signatures, both tickets, manifest/checksum consistency, and installation behavior. A preview can be published with remaining recipient checks disclosed; promotion to stable requires the complete fresh-Mac permission/download/shortcut/practice/insertion run. After publishing verify GitHub's release is public and the downloaded asset matches the local digest. Update the website and stable documentation only then.
 
 Apple's [notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow) documents submission, app-specific authentication, ticket stapling, and log review.
