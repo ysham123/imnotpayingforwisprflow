@@ -1,6 +1,6 @@
 # Developer ID distribution
 
-The public download is still v2.0.1. A local v2.1.0 candidate is Developer ID signed with secure timestamps and hardened runtime. Both signed helpers initialized their cached models on the creator's Mac. Apple notarization and a fresh-Mac permission/download/practice run remain pending. Do not change public download links until the final artifact is published and verified.
+The public download is still v2.0.1. A local v2.1.0 candidate is Developer ID signed with secure timestamps and hardened runtime. Both signed helpers initialized their cached models on the creator's Mac. Apple accepted the app and DMG with no reported issues; tickets are stapled and Gatekeeper checks pass. A real install transaction into an isolated temporary folder preserved the notarized app. A fresh-Mac permission/download/practice run and publication remain pending. Do not change public download links until the final artifact is published and verified.
 
 ## Signing
 

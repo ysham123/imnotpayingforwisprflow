@@ -25,7 +25,7 @@ and restoration of the original text box and caret where supported. See the
 [2.0.1 release notes](docs/releases/v2.0.1.md) and
 [validation record](docs/VALIDATION.md) for results and compatibility limits.
 
-A [guided setup candidate for 2.1.0](docs/GUIDED-SETUP.md) is in development. The public download above remains v2.0.1.
+A [guided setup candidate for 2.1.0](docs/GUIDED-SETUP.md) is now Developer ID signed and Apple notarized locally. Fresh-Mac onboarding validation and publication are still pending. The public download above remains v2.0.1.
 
 Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Shortcuts → Change shortcut…**.
 
