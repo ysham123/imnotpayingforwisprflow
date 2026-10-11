@@ -26,14 +26,26 @@ LOCAL_DICTATION_BUILD_DIR="$HOME/Library/Caches/LocalDictation-build" \
 LOCAL_DICTATION_RUNTIME="/Applications/Local Dictation.app/Contents/Resources" \
 bash Scripts/build.sh "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app"
 
-python3 Scripts/make-release.py \
+python3 -m venv .build-native/dmg-tools
+.build-native/dmg-tools/bin/python -m pip install -r Scripts/dmg-requirements.txt
+
+.build-native/dmg-tools/bin/python Scripts/make-release.py \
   "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app" \
-  "$HOME/Library/Caches/LocalDictation-release" --tag v2.0.0
+  "$HOME/Library/Caches/LocalDictation-release" --tag v2.1.0
+```
+
+The pinned Python packages are build tools only; recipients need none of them. The DMG uses Finder metadata written by `dmgbuild`, with the app, an Applications shortcut, and Retina installation artwork. Recipients drag the app to Applications, eject the image, and open the installed copy. Opening the disk-image copy shows placement guidance before any permissions, hotkeys, or models are initialized.
+
+The original app icon is bundled as `Resources/AppIcon.icns`. To regenerate all icon sizes and the disk-image backgrounds:
+
+```bash
+swift Scripts/create-artwork.swift "$PWD"
+iconutil -c icns .build-native/AppIcon.iconset -o Resources/AppIcon.icns
 ```
 
 Choose an empty release directory. The output contains `Local-Dictation.dmg`, model/release manifests, and SHA256SUMS. DMG creation copies the already-signed bundle without re-signing. Installation also preserves that signature. Finalize every executable/resource before signing.
 
-`RuntimePaths` supplies sealed executables and external model paths to both engines. Models live in `~/Library/Application Support/Local Dictation/Models`; saved shortcuts/words remain in local preferences. Compatible verified v1.2 weights migrate before replacement. Production downloads use system curl, HTTPS-only redirects, resumable partial files, file locks, disk-space checks, and size/SHA256 verification before atomic publication.
+`RuntimePaths` supplies sealed executables and external model paths to both engines. Models live in `~/Library/Application Support/Local Dictation/Models`; saved shortcuts/words remain in local preferences. The drag installer reuses already externalized model caches. An update directly from v1.2 may need to download its previously bundled weights again; keep the old bundle until that upgrade is complete. The legacy install transaction and model migration code remain covered by regression tests. Production downloads use system curl, HTTPS-only redirects, resumable partial files, file locks, disk-space checks, and size/SHA256 verification before atomic publication.
 
 For development, invoke `Scripts/package_app.py` with `--development` to use `dev.yosef.localdictation.development`, separate preferences/model storage, and no self-install into the public location. A development build cannot replace the public bundle. `--include-models` is an optional legacy/offline package mode and is rejected by the thin-release generator.
 

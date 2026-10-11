@@ -24,6 +24,7 @@ with tempfile.TemporaryDirectory(prefix='localdictation-real-signing-', dir='/pr
     identifier = info['CFBundleIdentifier']
     package.write_bytes_checked(app / 'Contents/Info.plist', plistlib.dumps(info))
     package.copy_bytes(source / 'Resources/ModelManifest.json', resources / 'ModelManifest.json')
+    package.copy_bytes(source / 'Resources/AppIcon.icns', resources / 'AppIcon.icns')
     evidence = resources / 'fixture.txt'; evidence.write_text('real sealed resource\n')
     for relative, code_id in [('MacOS/LocalDictation', identifier),
                               ('Resources/whisper-worker', identifier + '.whisper-worker'),

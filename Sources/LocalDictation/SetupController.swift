@@ -141,7 +141,16 @@ final class SetupController: NSObject, NSWindowDelegate {
     private func buildWindow() {
         guard let content = window.contentView else { return }
         let title = label("Local Dictation", size: 18, weight: .semibold)
-        let header = NSStackView(views: [title, NSView(), stepLabel])
+        var headerViews: [NSView] = []
+        if let artwork = NSImage(named: "AppIcon") {
+            let icon = NSImageView(image: artwork)
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.widthAnchor.constraint(equalToConstant: 30).isActive = true
+            icon.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            headerViews.append(icon)
+        }
+        headerViews += [title, NSView(), stepLabel]
+        let header = NSStackView(views: headerViews)
         header.alignment = .centerY; header.spacing = 12
         stepLabel.font = .systemFont(ofSize: 12); stepLabel.textColor = .secondaryLabelColor
         progress.style = .bar; progress.isIndeterminate = false

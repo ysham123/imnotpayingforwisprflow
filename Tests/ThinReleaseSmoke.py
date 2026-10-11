@@ -59,6 +59,7 @@ def fixture_app(root):
         path.write_bytes(('signed fixture ' + name).encode()); path.chmod(0o755)
     package.copy_bytes(source / 'Resources/ModelManifest.json', resources / 'ModelManifest.json')
     package.copy_bytes(source / 'Resources/StartHere.html', resources / 'StartHere.html')
+    package.copy_bytes(source / 'Resources/AppIcon.icns', resources / 'AppIcon.icns')
     (resources / 'Licenses').mkdir()
     (resources / 'Licenses/license.txt').write_text('fixture license\n')
     (app / 'Contents/_CodeSignature').mkdir()
@@ -85,8 +86,8 @@ with tempfile.TemporaryDirectory(prefix='localdictation-thin-release-') as temp:
             assert actual == original_bytes, 'Signed app bytes changed during staging'
             if checked != app:
                 assert arguments[arguments.index('--test-requirement') + 1] == '=' + requirement
-        if arguments[:2] == ['hdiutil', 'create']:
-            content = Path(arguments[arguments.index('-srcfolder') + 1])
+        if len(arguments) > 1 and Path(arguments[1]).name == 'create-dmg.py':
+            content = Path(arguments[-2])
             assert (content / 'Local Dictation.app').is_dir()
             assert package.read_text_checked(content / 'READ ME FIRST.txt').startswith('LOCAL DICTATION ')
             assert package.read_bytes_checked(content / 'START HERE.html') == original_bytes[Path('Contents/Resources/StartHere.html')]
@@ -122,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix='localdictation-thin-release-') as temp:
 
     bad_output = root / 'empty-image'
     def empty_image(arguments, **kwargs):
-        if arguments[:2] == ['hdiutil', 'create']:
+        if len(arguments) > 1 and Path(arguments[1]).name == 'create-dmg.py':
             Path(arguments[-1]).write_bytes(b'')
             return SimpleNamespace(stdout='', stderr='', returncode=0)
         assert arguments[:2] != ['hdiutil', 'verify'], 'Empty DMG reached verification'

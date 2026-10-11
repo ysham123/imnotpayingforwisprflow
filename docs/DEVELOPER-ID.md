@@ -1,6 +1,6 @@
 # Developer ID distribution
 
-The public download is still v2.0.1. A local v2.1.0 candidate is Developer ID signed with secure timestamps and hardened runtime. Both signed helpers initialized their cached models on the creator's Mac. Apple accepted the app and DMG with no reported issues; tickets are stapled and Gatekeeper checks pass. A real install transaction into an isolated temporary folder preserved the notarized app. A fresh-Mac permission/download/practice run and publication remain pending. Do not change public download links until the final artifact is published and verified.
+The public download is still v2.0.1. A local v2.1.0 candidate is Developer ID signed with secure timestamps and hardened runtime. Both signed helpers initialized their cached models on the creator's Mac. Apple accepted the app and DMG with no reported issues; tickets are stapled and Gatekeeper checks pass. The new drag-to-Applications disk image was visually checked in Finder. A real copy into an isolated temporary folder preserved the notarized app. A fresh-Mac permission/download/practice run and publication remain pending. Do not change public download links until the final artifact is published and verified.
 
 ## Signing
 
@@ -42,12 +42,14 @@ The tool creates a ZIP, preserves its digest and Apple's submission ID, waits fo
 After the app ticket and Gatekeeper checks pass, package its stapled bytes:
 
 ```bash
-python3 Scripts/make-release.py '/path/to/Local Dictation.app' \
+python3 -m venv .build-native/dmg-tools
+.build-native/dmg-tools/bin/python -m pip install -r Scripts/dmg-requirements.txt
+.build-native/dmg-tools/bin/python Scripts/make-release.py '/path/to/Local Dictation.app' \
   '/path/to/empty/release-directory' --tag v2.1.0 \
   --notarized-app --team-id '<Apple Team ID>'
 ```
 
-This verifies the notarized app before packaging and uses opening guidance for the trusted app. The manifest explicitly records that the disk image's own notarization is pending. Sign the resulting DMG with the same Developer ID identity and a secure timestamp, then invoke `Scripts/notarize.py` on that DMG with a separate evidence directory. Disk images do not need executable hardened-runtime flags.
+This verifies the notarized app before packaging, requires the bundled app icon, and creates the standard drag-to-Applications Finder layout. The build-only packages and artwork regeneration are documented in [DEVELOPMENT.md](DEVELOPMENT.md). It uses opening guidance for the trusted app. The manifest explicitly records that the disk image's own notarization is pending. Sign the resulting DMG with the same Developer ID identity and a secure timestamp, then invoke `Scripts/notarize.py` on that DMG with a separate evidence directory. Disk images do not need executable hardened-runtime flags.
 
 Signing and stapling change the DMG bytes. Recompute the DMG asset size and SHA-256 in `release-manifest.json`, mark disk-image notarization Accepted only after ticket/Gatekeeper checks, and regenerate all `SHA256SUMS` entries from the final files. Verify the app installed from that final DMG, permissions, model download or reuse, shortcut detection, practice, and external insertion. A fixture render does not establish fresh-Mac readiness.
 

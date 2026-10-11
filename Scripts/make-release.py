@@ -8,6 +8,7 @@ from pathlib import Path
 import plistlib
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -152,6 +153,12 @@ def validate_release_app(app, requirement=None):
         raise RuntimeError('Only the public Apple Silicon macOS 14+ app may be released')
     if (app / 'Contents/Resources/Models').exists():
         raise RuntimeError('Package a thin app before creating the DMG; model weights belong in Application Support')
+    icon_name = info.get('CFBundleIconFile')
+    if icon_name != 'AppIcon':
+        raise RuntimeError('Public app must declare its AppIcon resource')
+    icon = read_bytes_checked(app / 'Contents/Resources/AppIcon.icns')
+    if icon[:4] != b'icns' or int.from_bytes(icon[4:8], 'big') != len(icon):
+        raise RuntimeError('App icon is missing or incomplete')
     for name in ['Contents/MacOS/LocalDictation', 'Contents/Resources/whisper-worker']:
         validate_executable(app / name)
     validate_runtime(app / 'Contents/Resources', require_models=False)
@@ -197,15 +204,14 @@ def main():
         opening = ('This app is Developer ID signed and notarized by Apple.\nConfirm Open if macOS asks on first launch.\n'
                    if args.notarized_app else
                    'This community app is not notarized by Apple. If macOS blocks it,\nreview System Settings > Privacy & Security > Open Anyway.\n')
-        readme = ('LOCAL DICTATION ' + version + '\n\nOpen START HERE.html for the setup guide.\nOpen Local Dictation.app and choose Install & Open.\n'
+        readme = ('LOCAL DICTATION ' + version + '\n\nDrag Local Dictation onto the Applications folder beside it.\nEject the disk image, then open Local Dictation from Applications.\nQuit the old app before replacing it when updating.\n'
                   'Choose Start setup and follow the permission, model, shortcut, and practice steps.\n'
                   'Models download and verify about 3.4 GB into Application Support.\n'
                   'Existing verified models are reused.\n' + opening +
                   'Installation does not change Gatekeeper, certificate trust, or permissions.\n')
         write_bytes_checked(content / 'READ ME FIRST.txt', readme.encode())
         write_bytes_checked(content / 'START HERE.html', read_bytes_checked(args.app / 'Contents/Resources/StartHere.html'))
-        subprocess.run(['hdiutil', 'create', '-volname', 'Local Dictation', '-srcfolder', str(content),
-                        '-format', 'UDZO', '-ov', str(image)], check=True)
+        subprocess.run([sys.executable, str(source / 'Scripts/create-dmg.py'), str(content), str(image)], check=True)
         hash_file_checked(image)  # Reject empty/truncated image reads before verification.
         subprocess.run(['hdiutil', 'verify', str(image)], check=True)
     model_data = read_bytes_checked(args.app / 'Contents/Resources/ModelManifest.json')
