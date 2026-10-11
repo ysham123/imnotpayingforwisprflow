@@ -5,13 +5,13 @@
 <h1 align="center">I'm not paying for Wispr Flow.</h1>
 <p align="center"><strong>Local voice dictation for your Mac. Free to use. Yours to build on.</strong></p>
 <p align="center">
-  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.1.0"><img alt="Public preview 2.1.0" src="https://img.shields.io/badge/preview-v2.1.0-245be8?style=flat-square" /></a>
+  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.2.0"><img alt="Public preview 2.2.0" src="https://img.shields.io/badge/preview-v2.2.0-245be8?style=flat-square" /></a>
   <img alt="macOS 14 or newer" src="https://img.shields.io/badge/macOS-14%2B-202c28?style=flat-square" />
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple_Silicon-M1_or_newer-202c28?style=flat-square" />
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-202c28?style=flat-square" /></a>
 </p>
 <p align="center">
-  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.1.0/Local-Dictation.dmg"><strong>↓ Download 2.1.0 preview for Mac</strong></a>
+  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.2.0/Local-Dictation.dmg"><strong>↓ Download 2.2.0 preview for Mac</strong></a>
   &nbsp;·&nbsp; <a href="#get-started">Get started</a>
   &nbsp;·&nbsp; <a href="#what-runs-under-the-hood">How it works</a>
   &nbsp;·&nbsp; <a href="docs/DEVELOPMENT.md">Build from source</a>
@@ -19,7 +19,7 @@
 
 **Click a text box. Double-tap Fn / Globe. Speak. Tap Fn once to finish.**
 
-**v2.1.0 is a public preview** with Developer ID signing, Apple notarization, a native app icon, and the familiar drag-to-Applications installer. Its new [guided setup](docs/GUIDED-SETUP.md) walks through permissions, local models, a shortcut check, and practice dictation. See the [2.1.0 preview release notes](docs/releases/v2.1.0.md).
+**v2.2.0 is a public preview** with Developer ID signing, Apple notarization, a native app icon, and the familiar drag-to-Applications installer. It opens as a regular Mac app with a Home window and Dock icon. Microphone selection and testing work while models load, and changing devices during a test keeps your choice. [Guided setup](docs/GUIDED-SETUP.md) walks through permissions, local models, a shortcut check, and practice dictation. See the [2.2.0 preview release notes](docs/releases/v2.2.0.md).
 
 Signing, notarization, packaging, and automated macOS checks pass. A complete first-time setup on a Mac that has never used Local Dictation is still unverified. The latest stable release remains [v2.0.1](https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.0.1); its download uses the earlier ad-hoc installation flow. Editor compatibility limits are recorded in [VALIDATION.md](docs/VALIDATION.md).
 
@@ -40,7 +40,7 @@ That example passes the local model checks. Ambiguous speech, names, and numbers
 
 ### 1. Install
 
-[**Download the 2.1.0 preview DMG**](https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.1.0/Local-Dictation.dmg), open it, and drag **Local Dictation** onto the **Applications** folder beside it. Eject the disk image, then open Local Dictation from Applications. No Terminal or developer tools are needed.
+[**Download the 2.2.0 preview DMG**](https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.2.0/Local-Dictation.dmg), open it, and drag **Local Dictation** onto the **Applications** folder beside it. Eject the disk image, then open Local Dictation from Applications. No Terminal or developer tools are needed.
 
 For an update, finish any dictation and quit the old app first. Choose **Replace** if Finder asks. Models already stored in Application Support and saved preferences are reused.
 

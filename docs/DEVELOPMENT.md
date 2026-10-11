@@ -31,7 +31,7 @@ python3 -m venv .build-native/dmg-tools
 
 .build-native/dmg-tools/bin/python Scripts/make-release.py \
   "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app" \
-  "$HOME/Library/Caches/LocalDictation-release" --tag v2.1.0
+  "$HOME/Library/Caches/LocalDictation-release" --tag v2.2.0
 ```
 
 The pinned Python packages are build tools only; recipients need none of them. The DMG uses Finder metadata written by `dmgbuild`, with the app, an Applications shortcut, and Retina installation artwork. Recipients drag the app to Applications, eject the image, and open the installed copy. Opening the disk-image copy shows placement guidance before any permissions, hotkeys, or models are initialized.
@@ -49,7 +49,7 @@ Choose an empty release directory. The output contains `Local-Dictation.dmg`, mo
 
 For development, invoke `Scripts/package_app.py` with `--development` to use `dev.yosef.localdictation.development`, separate preferences/model storage, and no self-install into the public location. A development build cannot replace the public bundle. `--include-models` is an optional legacy/offline package mode and is rejected by the thin-release generator.
 
-The stable v2.0.1 release uses ad-hoc signing. The [Developer ID distribution workflow](DEVELOPER-ID.md) prepares the 2.1.0 public preview with hardened runtime, secure timestamps, and Apple notarization. Fresh-Mac validation is still required before promoting the preview to stable. Creator self-signed builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Developer ID builds retain Apple's generated designated requirement and verify the expected team. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
+The stable v2.0.1 release uses ad-hoc signing. The [Developer ID distribution workflow](DEVELOPER-ID.md) prepares public previews with hardened runtime, secure timestamps, and Apple notarization. Fresh-Mac validation is still required before promoting the preview to stable. Creator self-signed builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Developer ID builds retain Apple's generated designated requirement and verify the expected team. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
 
 The isolated free self-signed experiment could not establish a system-trusted signing identity without trust changes. It does not demonstrate recipient TCC grant retention. Self-signing is therefore not adopted for distribution; ad-hoc updates may still require permission renewal. The new notarization tooling does not automatically publish a release, update the app, or change certificate trust.
 
