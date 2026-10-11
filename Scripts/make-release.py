@@ -13,7 +13,8 @@ import tempfile
 import zipfile
 from package_app import (copy_bytes, hash_file_checked, read_bytes_checked,
                          read_text_checked, validate_executable, validate_runtime,
-                         validate_source_resources, validate_model_manifest, write_bytes_checked)
+                         validate_source_resources, validate_model_manifest, write_bytes_checked,
+                         verify_developer_id)
 
 class PartsWriter:
     def __init__(self, output, base, limit=1_800_000_000):
@@ -166,10 +167,20 @@ def main():
     parser.add_argument('app', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--tag', required=True)
+    parser.add_argument('--notarized-app', action='store_true', help='Require a Developer ID app with a valid stapled Apple ticket')
+    parser.add_argument('--team-id', help='Expected Apple Developer Team ID when packaging a notarized app')
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     validate_source_resources(source)
     info = validate_release_app(args.app)
+    if args.notarized_app:
+        if not re.fullmatch(r'[A-Z0-9]{10}', args.team_id or ''):
+            raise RuntimeError('--notarized-app requires the expected --team-id')
+        verify_developer_id(args.app, info['CFBundleIdentifier'], args.team_id)
+        subprocess.run(['xcrun', 'stapler', 'validate', str(args.app)], check=True)
+        subprocess.run(['spctl', '--assess', '--type', 'execute', '--verbose=2', str(args.app)], check=True)
+    elif args.team_id:
+        raise RuntimeError('--team-id requires --notarized-app')
     version = info['CFBundleShortVersionString']
     if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,2}', version) or args.tag != 'v' + version:
         raise RuntimeError('Tag must match the numeric app version')
@@ -183,12 +194,13 @@ def main():
         copy_bytes(args.app, stage)
         # Every byte of the signed app is preserved. Never sign it ad-hoc here.
         validate_release_app(stage, requirement)
+        opening = ('This app is Developer ID signed and notarized by Apple.\nConfirm Open if macOS asks on first launch.\n'
+                   if args.notarized_app else
+                   'This community app is not notarized by Apple. If macOS blocks it,\nreview System Settings > Privacy & Security > Open Anyway.\n')
         readme = ('LOCAL DICTATION ' + version + '\n\nOpen START HERE.html for the setup guide.\nOpen Local Dictation.app and choose Install & Open.\n'
-                  'The installed app downloads and verifies about 3.4 GB of local models\n'
-                  'into Application Support on first use. Existing verified models are reused.\n'
-                  'Then grant Microphone, Accessibility, and Input Monitoring in Settings.\n'
-                  'This community app is not notarized by Apple. If macOS blocks it,\n'
-                  'review System Settings > Privacy & Security > Open Anyway.\n'
+                  'Choose Start setup and follow the permission, model, shortcut, and practice steps.\n'
+                  'Models download and verify about 3.4 GB into Application Support.\n'
+                  'Existing verified models are reused.\n' + opening +
                   'Installation does not change Gatekeeper, certificate trust, or permissions.\n')
         write_bytes_checked(content / 'READ ME FIRST.txt', readme.encode())
         write_bytes_checked(content / 'START HERE.html', read_bytes_checked(args.app / 'Contents/Resources/StartHere.html'))
@@ -202,6 +214,8 @@ def main():
                 'distribution': 'thin-dmg', 'designated_requirement': requirement,
                 'model_manifest_sha256': hashlib.sha256(model_data).hexdigest(),
                 'assets': [{'name': image.name, 'sha256': hash_file_checked(image), 'bytes': image.stat().st_size}]}
+    if args.notarized_app:
+        manifest['notarization'] = {'app': 'Accepted', 'diskImage': 'pending', 'team_id': args.team_id}
     write_bytes_checked(args.output / 'release-manifest.json', (json.dumps(manifest, indent=2) + '\n').encode())
     rows = [hash_file_checked(path) + '  ' + path.name for path in sorted(args.output.iterdir())]
     write_bytes_checked(args.output / 'SHA256SUMS', ('\n'.join(rows) + '\n').encode())

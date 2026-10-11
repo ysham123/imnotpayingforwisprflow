@@ -88,5 +88,6 @@ jobs:
         run: |
           python3 Tests/PackagingSmoke.py
           python3 Tests/ThinReleaseSmoke.py
+          python3 Tests/NotarizationSmoke.py
           python3 Tests/RealSigningSmoke.py
           python3 Tests/InstallerSmoke.py

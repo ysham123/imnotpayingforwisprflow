@@ -37,9 +37,9 @@ Choose an empty release directory. The output contains `Local-Dictation.dmg`, mo
 
 For development, invoke `Scripts/package_app.py` with `--development` to use `dev.yosef.localdictation.development`, separate preferences/model storage, and no self-install into the public location. A development build cannot replace the public bundle. `--include-models` is an optional legacy/offline package mode and is rejected by the thin-release generator.
 
-Current releases use ad-hoc signing. Non-ad-hoc builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
+The public v2.0.1 release uses ad-hoc signing. A separate [Developer ID distribution workflow](DEVELOPER-ID.md) prepares the guided v2.1.0 candidate with hardened runtime and secure timestamps; notarization is pending. Creator self-signed builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Developer ID builds retain Apple's generated designated requirement and verify the expected team. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
 
-The isolated free self-signed experiment could not establish a system-trusted signing identity without trust changes. It does not demonstrate recipient TCC grant retention. Self-signing is therefore not adopted for distribution; ad-hoc updates may still require permission renewal. No Apple notarization, automatic updater, or trust import is included.
+The isolated free self-signed experiment could not establish a system-trusted signing identity without trust changes. It does not demonstrate recipient TCC grant retention. Self-signing is therefore not adopted for distribution; ad-hoc updates may still require permission renewal. The new notarization tooling does not automatically publish a release, update the app, or change certificate trust.
 
 For repeated permission setup, first run `python3 Scripts/diagnose-permissions.py`
 against the unchanged installation. It separates observed changed-build gaps,
@@ -76,6 +76,7 @@ bash Scripts/test-transcriber.sh
 bash Scripts/test-worker-faults.sh
 python3 Tests/PackagingSmoke.py
 python3 Tests/ThinReleaseSmoke.py
+python3 Tests/NotarizationSmoke.py
 python3 Tests/RealSigningSmoke.py
 python3 Tests/InstallerSmoke.py
 ```

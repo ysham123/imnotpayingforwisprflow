@@ -176,4 +176,30 @@ with tempfile.TemporaryDirectory(prefix='localdictation-thin-release-') as temp:
     assert 'certificate leaf = H"' + 'a' * 40 + '"' in options[-1]
     print('PASS persistent signing requires exact certificate pin for app and helpers')
 
-print('Passed 8 thin-package/release regression groups (external signing and DMG tools mocked)')
+    rejects(lambda: package.signing_options('-', helper_id, developer_id=True), 'exact certificate SHA-1')
+    rejects(lambda: package.signing_options('a' * 40, helper_id, requirement, developer_id=True), 'Apple-generated')
+    options = package.signing_options('a' * 40, helper_id, developer_id=True, keychain='/private/signing.keychain-db')
+    assert '--timestamp' in options and '--timestamp=none' not in options
+    assert options[-2:] == ['--options', 'runtime']
+    assert options[options.index('--keychain') + 1] == '/private/signing.keychain-db'
+    assert '--requirements' not in options
+    print('PASS Developer ID signing uses secure timestamps, hardened runtime, and the explicit certificate/keychain')
+
+    details = 'Authority=Developer ID Application: Test\nTeamIdentifier=ABCDEFGHIJ\nTimestamp=Oct 11 2026\nCodeDirectory flags=0x10000(runtime)\n'
+    def developer_run(arguments, **kwargs):
+        if '--display' in arguments: return SimpleNamespace(stderr=details)
+        assert '--test-requirement' in arguments
+        policy = arguments[arguments.index('--test-requirement') + 1]
+        assert 'anchor apple generic' in policy and 'subject.OU] = "ABCDEFGHIJ"' in policy
+        assert '1.2.840.113635.100.6.1.13' in policy
+        return SimpleNamespace(stderr='')
+    with patch.object(package.subprocess, 'run', side_effect=developer_run):
+        package.verify_developer_id(app, info['CFBundleIdentifier'], 'ABCDEFGHIJ')
+        for missing in ['TeamIdentifier=ABCDEFGHIJ', 'Authority=Developer ID Application:', 'Timestamp=', '(runtime)']:
+            saved = details
+            details = details.replace(missing, '')
+            rejects(lambda: package.verify_developer_id(app, info['CFBundleIdentifier'], 'ABCDEFGHIJ'), 'publisher, hardened runtime')
+            details = saved
+    print('PASS distribution verification rejects missing publisher, hardened runtime, and secure timestamp')
+
+print('Passed 10 thin-package/release regression groups (external signing and DMG tools mocked)')
