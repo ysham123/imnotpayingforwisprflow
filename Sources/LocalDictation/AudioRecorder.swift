@@ -1,6 +1,7 @@
 import AVFoundation
 import AudioToolbox
 import Foundation
+import OSLog
 #if canImport(DictationCore)
 import DictationCore
 #endif
@@ -30,6 +31,8 @@ final class AudioRecorder: MicrophonePreview {
     private var configurationObserver: NSObjectProtocol?
     private var inputMonitor: AudioInputMonitor?
     private var sessionID: UUID?
+    private var configurationRecovery = CaptureConfigurationRecovery()
+    private static let logger = Logger(subsystem: "com.localdictation.app", category: "AudioCapture")
     private(set) var isRecording = false
     private(set) var activeInputName: String?
     private(set) var inputNotice: String?
@@ -102,6 +105,7 @@ final class AudioRecorder: MicrophonePreview {
         self.engine = engine
         self.session = session
         sessionID = token
+        configurationRecovery = CaptureConfigurationRecovery()
         isRecording = true
         activeInputName = resolution.device.name
         inputNotice = resolution.fallbackNotice
@@ -114,10 +118,37 @@ final class AudioRecorder: MicrophonePreview {
         }
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-        ) { [weak self] _ in
+        ) { [weak self, weak engine] _ in
+            guard let engine else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.sessionID == token, self.isRecording else { return }
-                self.session?.interrupt(.inputChanged)
+                guard let self, self.sessionID == token,
+                      self.isRecording, session.isCapturing else { return }
+                // This notification also describes output changes and delayed
+                // startup configuration. It does not prove the mic changed.
+                let matches = AudioInputProvider.currentDeviceID(of: engine.inputNode.audioUnit) == resolution.device.id
+                    && engine.inputNode.outputFormat(forBus: 0).isEqual(inputFormat)
+                switch self.configurationRecovery.handle(
+                    inputAvailable: AudioInputProvider.isAlive(resolution.device.id),
+                    inputMatches: matches, engineRunning: engine.isRunning
+                ) {
+                case .keepRecording:
+                    Self.logger.info("Audio configuration settled; compatible input is still running")
+                case .restart:
+                    // Apple may stop the engine when the output reconfigures.
+                    // Restart only the same input/format, without replacing the
+                    // tap, converter, captured prefix, or recording deadline.
+                    do {
+                        try engine.start()
+                        Self.logger.info("Audio engine restarted with the same input format")
+                    } catch {
+                        session.interrupt(.captureInterrupted("The audio engine could not restart. \(error.localizedDescription)"))
+                    }
+                case .inputChanged:
+                    Self.logger.info("Audio capture stopped because the input changed or disconnected")
+                    session.interrupt(.inputChanged)
+                case .restartLimitReached:
+                    session.interrupt(.captureInterrupted("The audio engine repeatedly stopped. Try recording again."))
+                }
             }
         }
     }
@@ -162,6 +193,7 @@ final class AudioRecorder: MicrophonePreview {
         case conversionFailed(String)
         case recordingTooLong
         case inputChanged
+        case captureInterrupted(String)
         case emptyRecording
 
         var errorDescription: String? {
@@ -173,9 +205,25 @@ final class AudioRecorder: MicrophonePreview {
             case .conversionFailed(let reason): return "Could not process microphone audio: \(reason)"
             case .recordingTooLong: return "The 5-minute limit was reached. The speech captured so far was kept."
             case .inputChanged: return "The microphone changed. The speech captured so far was kept."
+            case .captureInterrupted(let reason): return "\(reason) The speech captured so far was kept."
             case .emptyRecording: return "No microphone audio was captured."
             }
         }
+    }
+}
+
+/// Configuration notifications may be harmless, or may require a restart.
+/// A real input change must always finish the prefix; repeated engine failure
+/// must never leave an endless restart loop or an apparently live microphone.
+struct CaptureConfigurationRecovery {
+    enum Action: Equatable { case keepRecording, restart, inputChanged, restartLimitReached }
+    private(set) var restartAttempts = 0
+    mutating func handle(inputAvailable: Bool, inputMatches: Bool, engineRunning: Bool) -> Action {
+        guard inputAvailable, inputMatches else { return .inputChanged }
+        if engineRunning { return .keepRecording }
+        guard restartAttempts < 2 else { return .restartLimitReached }
+        restartAttempts += 1
+        return .restart
     }
 }
 
@@ -256,6 +304,12 @@ final class CaptureSession: @unchecked Sendable {
         samples.append(contentsOf: acceptedSamples)
         levelToNotify = levelMeter.consume(acceptedSamples)
         if samples.count == maximumSamples { failure = .recordingTooLong; notify = true }
+    }
+
+    var isCapturing: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !finished && failure == nil
     }
 
     func interrupt(_ reason: AudioRecorder.RecordingError) {

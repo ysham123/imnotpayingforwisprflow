@@ -1,0 +1,51 @@
+{
+  "version": "2.2.1",
+  "build": "16",
+  "packaged_source_commit": "c1f44f76be23d2195c3c439040cf1212dd8affa8",
+  "channel": "public-preview",
+  "notarization": {
+    "app": "Accepted",
+    "diskImage": "Accepted",
+    "team_id": "2563R7W8T6",
+    "app_submission_id": "a0a96492-7e96-4dfc-b5d4-a23cc4dc3ee5",
+    "disk_image_submission_id": "5fb311b3-a404-428f-90d0-6a724ee472be"
+  },
+  "disk_image": {
+    "name": "Local-Dictation.dmg",
+    "sha256": "a4d81e782f87d1c52b2ddc11c9e6487a66018f41d3436b543105b393693b7c7b",
+    "bytes": 13640254
+  },
+  "mounted_app_file_count": 77,
+  "mounted_payload_matches_candidate": true,
+  "isolated_copy_matches_candidate": true,
+  "isolated_copy_signature_ticket_and_gatekeeper_pass": true,
+  "installed_payload_matches_candidate": true,
+  "installed_microphone_preview": {
+    "real_input_start_stop_cycles": 2,
+    "nonzero_level_meter_observed": true,
+    "compatible_configuration_notification_kept_recording": true,
+    "audio_saved": false,
+    "transcription_or_insertion_tested": false
+  },
+  "physical_fn_workflow": "Exact gesture not independently observed; creator confirmed installed dictation works.",
+  "installed_permissions": {
+    "microphone": true,
+    "accessibility": true,
+    "inputMonitoring": true,
+    "listenerActive": true
+  },
+  "permission_continuity": "retained on this Mac across 2.2.0 to 2.2.1",
+  "fresh_mac_onboarding": "unverified",
+  "physical_device_disconnect": "unverified",
+  "stopped_engine_restart": "fixture coverage only",
+  "designated_requirement_matches_previous_preview": true,
+  "github_packaged_source_checks": {
+    "run_id": 38118785943,
+    "conclusion": "success"
+  },
+  "apple_reported_issues": {
+    "app": [],
+    "dmg": []
+  },
+  "creator_installed_dictation_confirmation": "Creator confirmed using dictation successfully after the installed update."
+}

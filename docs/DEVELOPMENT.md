@@ -31,7 +31,7 @@ python3 -m venv .build-native/dmg-tools
 
 .build-native/dmg-tools/bin/python Scripts/make-release.py \
   "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app" \
-  "$HOME/Library/Caches/LocalDictation-release" --tag v2.2.0
+  "$HOME/Library/Caches/LocalDictation-release" --tag v2.2.1
 ```
 
 The pinned Python packages are build tools only; recipients need none of them. The DMG uses Finder metadata written by `dmgbuild`, with the app, an Applications shortcut, and Retina installation artwork. Recipients drag the app to Applications, eject the image, and open the installed copy. Opening the disk-image copy shows placement guidance before any permissions, hotkeys, or models are initialized.

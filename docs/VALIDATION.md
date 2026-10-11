@@ -1,6 +1,14 @@
 # Release validation
 
-This records the v2.2.0 and v2.1.0 public previews, the v2.0.1 stable package, earlier candidate checks, and historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+This records the v2.2.1, v2.2.0, and v2.1.0 public previews, the v2.0.1 stable package, earlier candidate checks, and historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+
+## 2.2.1 microphone configuration recovery, 2026-10-11
+
+Version **2.2.1 build 16** fixes recordings that stopped on an audio-engine configuration notification even though the input was unchanged. The packaged source is `c1f44f7`; its full GitHub macOS workflow passed. Compatible notifications leave a running microphone active. A stopped engine can restart with the same input and format, with at most two restart attempts per recording. Actual input changes/disconnects still finish the captured prefix. Cancelled/finished captures ignore queued notifications.
+
+The installed update passed two real built-in microphone preview start/stop checks. A nonzero level meter was observed, and CoreAudio/app logs confirmed that a compatible configuration notification kept recording active. These checks used the production recorder but did not transcribe or insert text; no microphone audio was saved. The creator then confirmed using dictation successfully in the installed update. The exact gesture and destination were not independently observed. The installed readiness record matched build 16 and showed Microphone, Accessibility, Input Monitoring, and the shortcut listener allowed/active, retaining access across the 2.2.0 → 2.2.1 update on this Mac.
+
+The app and DMG were Accepted by Apple notarization with no reported issues. All 77 files in the final mounted app, isolated Applications copy, and installed app match the candidate. Signature, stapled-ticket, and Gatekeeper checks pass. [Release evidence](benchmarks/v2.2.1/release-verification.json) distinguishes these checks from fixture-only restart/disconnect coverage and the user-confirmed dictation and unverified fresh-Mac onboarding workflows. Apple Dictation’s use of Fn twice was confirmed on this Mac; macOS shortcut settings were not changed without approval.
 
 ## 2.2.0 app window and microphone preview, 2026-10-11
 

@@ -68,6 +68,16 @@ enum AudioInputProvider {
         return AudioObjectGetPropertyData(id, &address, 0, nil, &size, &alive) == noErr && alive != 0
     }
 
+    static func currentDeviceID(of audioUnit: AudioUnit?) -> AudioDeviceID? {
+        guard let audioUnit else { return nil }
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitGetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                                   kAudioUnitScope_Global, 0, &id, &size) == noErr,
+              id != 0 else { return nil }
+        return id
+    }
+
     private static func hasInput(_ id: AudioDeviceID) -> Bool {
         var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
                                                  mScope: kAudioDevicePropertyScopeInput,

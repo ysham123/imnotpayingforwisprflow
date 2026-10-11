@@ -1,6 +1,6 @@
-# Guided setup public preview (2.2.0)
+# Guided setup public preview (2.2.1)
 
-The preview replaces the crowded first-run window with one step at a time: welcome, three privacy approvals, verified model preparation, shortcut selection and detection, a real practice dictation, and completion. The public stable release remains 2.0.1 while 2.2.0 is in public preview.
+The preview replaces the crowded first-run window with one step at a time: welcome, three privacy approvals, verified model preparation, shortcut selection and detection, a real practice dictation, and completion. The public stable release remains 2.0.1 while 2.2.1 is in public preview.
 
 The app opens Home on launch and reopen, with a Dock entry and native sidebar. Choose Start or resume setup in Home. Microphone leads directly to input selection, permission status, and a level test; these controls remain available during model loading. Closing the window keeps dictation running; Quit Local Dictation stops it.
 
@@ -23,3 +23,5 @@ The DMG displays the app with its original blue voice icon beside an Application
 The original 2.1.0 preview is Developer ID signed with secure timestamps, hardened runtime, and the microphone entitlement. The signed speech and correction helpers initialized cached models on the creator's Mac. Apple accepted both the app and DMG with no reported issues; both tickets are stapled and pass Gatekeeper checks. The final two-icon DMG layout was checked in Finder. A real copy from that mounted image into an isolated temporary Applications folder preserved the app's signature and ticket. See [DEVELOPER-ID.md](DEVELOPER-ID.md) and the [preview release notes](releases/v2.1.0.md). A fresh Mac end-to-end permission/download/dictation run is still needed. The creator's currently installed build 12 and existing permissions were not replaced for the build 14 installer checks.
 
 The 2.2.0 update is also Developer ID signed and notarized, with valid tickets for the app and DMG and a verified isolated copy from the final image. Its Home/sidebar/microphone actions have injected native-control coverage. These tests do not replace real microphone or fresh-Mac onboarding checks. See [2.2.0 release notes](releases/v2.2.0.md).
+
+The 2.2.1 update fixes false microphone-change interruptions and passed two real microphone preview checks on the development Mac. The creator subsequently confirmed installed dictation works. Complete fresh-Mac onboarding remains unverified. See [2.2.1 release notes](releases/v2.2.1.md).
