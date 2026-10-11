@@ -45,6 +45,28 @@ import Foundation
         canceled.capture(buffer()); canceled.discard(); canceled.capture(buffer())
         do { _ = try canceled.finish(); fatalError("Canceled audio returned") } catch AudioRecorder.RecordingError.emptyRecording { }
         print("PASS empty interruption and discard ignore late buffers")
+        precondition(!empty.isCapturing && !canceled.isCapturing && !interrupted.isCapturing)
+        let live = session(rate: 48_000, channels: 2)
+        precondition(live.isCapturing)
+        var recovery = CaptureConfigurationRecovery()
+        for _ in 0..<10 {
+            precondition(recovery.handle(inputAvailable: true, inputMatches: true, engineRunning: true) == .keepRecording,
+                         "Harmless startup/output configuration stopped a running microphone")
+        }
+        precondition(recovery.restartAttempts == 0)
+        live.capture(buffer())
+        precondition(recovery.handle(inputAvailable: true, inputMatches: true, engineRunning: false) == .restart)
+        live.capture(buffer())
+        precondition(recovery.handle(inputAvailable: true, inputMatches: true, engineRunning: true) == .keepRecording)
+        let uninterrupted = try live.finish()
+        precondition((3_180...3_220).contains(uninterrupted.samples.count) && uninterrupted.warning == nil,
+                     "Compatible recovery lost the captured prefix or added an interruption")
+        precondition(!live.isCapturing)
+        precondition(recovery.handle(inputAvailable: false, inputMatches: true, engineRunning: true) == .inputChanged)
+        precondition(recovery.handle(inputAvailable: true, inputMatches: false, engineRunning: true) == .inputChanged)
+        precondition(recovery.handle(inputAvailable: true, inputMatches: true, engineRunning: false) == .restart)
+        precondition(recovery.handle(inputAvailable: true, inputMatches: true, engineRunning: false) == .restartLimitReached)
+        print("PASS harmless configuration, same-input restart, prefix continuity, disconnect/format change, and bounded recovery")
         var meter = AudioLevelMeter(sampleRate: 16_000)
         let half = [Float](repeating: 0.1, count: 800)
         precondition(half.withUnsafeBufferPointer { meter.consume($0) } == nil, "Meter emitted before 100 ms")
@@ -81,6 +103,6 @@ import Foundation
             fatalError("An absent microphone silently selected an arbitrary device")
         } catch AudioRecorder.RecordingError.unavailableInput { }
         print("PASS system input, stable UID, fallback notice, and absent input resolution")
-        print("Passed 10 audio recovery, capture-boundary, level, and device-resolution regressions")
+        print("Passed 11 audio recovery, capture-boundary, level, and device-resolution regressions")
     }
 }
