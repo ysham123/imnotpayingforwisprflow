@@ -4,101 +4,30 @@ import CryptoKit
 import Darwin
 
 /// Runs before permission requests, shortcut registration, or local engines.
+/// Finder performs the standard drag-to-Applications installation.
 @MainActor
 final class InstallController {
     private let bundle: Bundle
-    private var installing = false
-
     init(bundle: Bundle = .main) { self.bundle = bundle }
 
-    /// False means installation/cancellation was handled; caller should quit this
-    /// source copy. A system launcher opens the verified installed copy after exit.
     func ensureInstalled() async -> Bool {
-        guard !installing else { return false }
         guard bundle.bundleURL.pathExtension == "app", let identifier = bundle.bundleIdentifier else { return true }
-        // Explicit development builds have their own identity and location;
-        // installing one must never replace the public application.
         if identifier.hasSuffix(".development") { return true }
         let current = bundle.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
         let userApplications = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
         let locations = [URL(fileURLWithPath: "/Applications"), userApplications]
             .map { $0.appendingPathComponent("Local Dictation.app") }
         if locations.contains(where: { $0.standardizedFileURL.resolvingSymlinksInPath() == current }) { return true }
-        let existing = locations.filter { FileManager.default.fileExists(atPath: $0.path) }
-        guard existing.count <= 1 else {
-            explain("Choose one installed copy", "Local Dictation is present in both /Applications and your personal Applications folder. Keep the copy you intend to use, then reopen this app. No copies have been changed.")
-            return false
-        }
-        let freshLocation = locations.first(where: {
-            FileManager.default.isWritableFile(atPath: $0.deletingLastPathComponent().path)
-        }) ?? userApplications.appendingPathComponent("Local Dictation.app")
-        let target = existing.first ?? freshLocation
-        if let old = existing.first,
-           Bundle(url: old)?.bundleIdentifier != identifier {
-            explain("Installation needs attention", "An application with a different identity occupies \(old.path). Choose its location in Finder; this installer will not replace it.")
-            return false
-        }
-        let peers = NSWorkspace.shared.runningApplications.filter {
-            $0.bundleIdentifier == identifier && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
-        }
-        guard peers.isEmpty else {
-            explain("Quit the existing app first", "Another Local Dictation copy is running. Quit it from its microphone menu, then reopen this download. Your installed app has not been changed.")
-            return false
-        }
-        let parent = target.deletingLastPathComponent()
-        if FileManager.default.fileExists(atPath: parent.path), !FileManager.default.isWritableFile(atPath: parent.path) {
-            explain("Install using Finder", "The existing installation folder is not writable. Quit Local Dictation, then copy this app to \(target.path) in Finder and open that copy. No second installation has been created.")
-            return false
-        }
         let alert = NSAlert()
-        alert.messageText = existing.isEmpty ? "Install Local Dictation?" : "Update Local Dictation?"
-        alert.informativeText = "The app will be installed at \(target.path). Models are verified and stored in Application Support. Permission setup begins only in the installed app."
-        alert.addButton(withTitle: "Install & Open"); alert.addButton(withTitle: "Cancel")
+        alert.messageText = "Move Local Dictation to Applications"
+        alert.informativeText = "Drag Local Dictation onto the Applications folder in the disk image. Then open it from Applications to set up permissions. If you’re updating, quit the old app before replacing it."
+        alert.addButton(withTitle: "Show in Finder")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return false }
-        installing = true; defer { installing = false }
-        let status = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 430, height: 130),
-                              styleMask: [.titled], backing: .buffered, defer: false)
-        status.title = "Installing Local Dictation"; status.center()
-        let label = NSTextField(wrappingLabelWithString: "Preserving verified models and installing the app…")
-        label.frame = NSRect(x: 24, y: 52, width: 382, height: 44)
-        let spinner = NSProgressIndicator(frame: NSRect(x: 24, y: 25, width: 382, height: 16))
-        spinner.style = .bar; spinner.isIndeterminate = true; spinner.startAnimation(nil)
-        status.contentView?.addSubview(label); status.contentView?.addSubview(spinner)
-        status.makeKeyAndOrderFront(nil); defer { status.orderOut(nil) }
-        do {
-            let paths = try RuntimePaths.application(bundle: bundle)
-            if let old = existing.first {
-                let legacy = old.appendingPathComponent("Contents/Resources/Models")
-                try await ModelStore(paths: paths, migrationSources: [legacy]).migrateAvailable()
-            }
-            let source = bundle.bundleURL
-            try await Task.detached(priority: .userInitiated) {
-                try AppInstallTransaction.install(source: source, target: target,
-                                                  expectedIdentifier: identifier)
-            }.value
-            try Self.launchAfterExit(target)
-            return false
-        } catch {
-            explain("Installation did not finish", error.localizedDescription + "\nOpen the app location in Finder or retry this download.")
-            return false
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([bundle.bundleURL])
         }
-    }
-
-    private func explain(_ title: String, _ message: String) {
-        let alert = NSAlert(); alert.messageText = title; alert.informativeText = message
-        alert.addButton(withTitle: "OK"); NSApp.activate(ignoringOtherApps: true); alert.runModal()
-    }
-
-    private static func launchAfterExit(_ target: URL) throws {
-        // Fixed script, separate positional arguments: paths are never shell code.
-        // Waiting avoids Launch Services reopening the still-running DMG copy.
-        let launcher = Process(); launcher.executableURL = URL(fileURLWithPath: "/bin/sh")
-        launcher.arguments = ["-c", "count=0; while /bin/kill -0 \"$1\" 2>/dev/null; do count=$((count+1)); [ \"$count\" -lt 150 ] || exit 1; /bin/sleep 0.2; done; exec /usr/bin/open \"$2\" --args --setup",
-                              "localdictation-open", String(ProcessInfo.processInfo.processIdentifier), target.path]
-        launcher.standardInput = FileHandle.nullDevice
-        launcher.standardOutput = FileHandle.nullDevice; launcher.standardError = FileHandle.nullDevice
-        try launcher.run()
+        return false
     }
 }
 

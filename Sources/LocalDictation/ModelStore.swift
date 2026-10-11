@@ -46,6 +46,18 @@ actor ModelStore {
         manifestOverride = manifest; downloadOverride = downloader
     }
 
+    /// A first-run UI hint only. prepare() still verifies every byte before use.
+    static func hasCachedFiles(_ paths: RuntimePaths) -> Bool {
+        guard let data = try? Data(contentsOf: paths.resources.appendingPathComponent("ModelManifest.json")),
+              let manifest = try? JSONDecoder().decode(Manifest.self, from: data), !manifest.files.isEmpty else { return false }
+        return manifest.files.allSatisfy { asset in
+            let url = paths.models.appendingPathComponent(asset.path)
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  attributes[.type] as? FileAttributeType == .typeRegular else { return false }
+            return (attributes[.size] as? NSNumber)?.int64Value == asset.bytes
+        }
+    }
+
     func prepare(progress: @escaping @MainActor (Progress) -> Void) async throws {
         guard !preparing else { throw RuntimeSetupError.message("Models are already being prepared. Wait for the current operation.") }
         preparing = true; defer { preparing = false }

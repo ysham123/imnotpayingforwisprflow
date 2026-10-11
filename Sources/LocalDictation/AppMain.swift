@@ -41,13 +41,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var listenerRetryAfter: TimeInterval = 0
     private var lastInputPermission: Bool?
     private let permissionDiagnostics = PermissionDiagnostics()
-    private var setupWindow: NSWindow?
-    private var setupStatus: NSTextField?
-    private var setupSubtitle: NSTextField?
-    private var shortcutLabel: NSTextField?
-    private var shortcutChangeButton: NSButton?
-    private var shortcutResetButton: NSButton?
-    private var keyboardHint: NSTextField?
+    private var setupController: SetupController?
+    private var setupWindow: NSWindow? { setupController?.window }
+    private var practiceSession: UUID?
+    private var modelFraction = 0.0
+    private var modelDetail = "About 3.4 GB. Keep 8 GB free."
+    private var modelSetupError: String?
+    private var downloadEstimate = SetupDownloadEstimate()
     private let shortcutRecorder = ShortcutRecorder()
     private var shortcutConfiguration = HotkeyPreferences.load()
     private var shortcutFailure: String?
@@ -104,14 +104,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var originalMenu: NSMenuItem!
     private var customWordsController: CustomWordsController?
     private var editingVocabulary = false
-    private var modelProgress: NSProgressIndicator?
-    private var modelActionButton: NSButton?
-    private var listenerRetryButton: NSButton?
-    private var permissionButtons: [String: NSButton] = [:]
-    private var continueSetupButton: NSButton?
-    private var guidedPermissionStep: String?
-    private var guidedPermissionSetup = false
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         let resources = ProcessInfo.processInfo.environment["LOCAL_DICTATION_RESOURCES"]
             .map { URL(fileURLWithPath: $0) } ?? Bundle.main.resourceURL!
@@ -162,12 +154,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         RunLoop.main.add(timer!, forMode: .common)
         refreshPermissions()
-        if !allPermissions || shortcutFailure != nil || listenerFailure != nil || CommandLine.arguments.contains("--setup") { showSetup() }
-        beginModelSetup()
+        let cached = (try? RuntimePaths.application()).map(ModelStore.hasCachedFiles) ?? false
+        if !cached || !allPermissions || shortcutFailure != nil || listenerFailure != nil || CommandLine.arguments.contains("--setup") { showSetup() }
+        // Existing installations continue loading immediately. New downloads
+        // start only after the user chooses Start setup (or Resume setup).
+        if cached { beginModelSetup() }
     }
 
     private func beginModelSetup() {
         guard modelPreparationTask == nil, !isTerminating, !runtimeInitialized else { return }
+        modelSetupError = nil; downloadEstimate.reset()
         modelPreparationStatus = "Checking local models…"
         updateStatus(modelPreparationStatus!)
         modelPreparationTask = Task { @MainActor [weak self] in
@@ -182,7 +178,22 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     let percent = Int(progress.fraction * 100)
                     self.modelPreparationStatus = progress.stage == .downloading
                         ? "Downloading \(progress.label) · \(percent)%" : progress.label
-                    self.modelProgress?.doubleValue = progress.fraction
+                    self.modelFraction = progress.fraction
+                    if progress.stage == .downloading {
+                        self.downloadEstimate.sample(bytes: progress.completedBytes, now: ProcessInfo.processInfo.systemUptime)
+                        let completed = ByteCountFormatter.string(fromByteCount: progress.completedBytes, countStyle: .file)
+                        let total = ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file)
+                        var detail = "\(progress.label) · \(completed) of \(total) · \(percent)%"
+                        if let rate = self.downloadEstimate.bytesPerSecond {
+                            detail += "\n" + ByteCountFormatter.string(fromByteCount: Int64(rate), countStyle: .file) + "/s"
+                            if let remaining = self.downloadEstimate.remaining(total: progress.totalBytes, completed: progress.completedBytes) {
+                                detail += " · about \(max(1, Int(ceil(remaining / 60)))) min remaining"
+                            }
+                        }
+                        self.modelDetail = detail
+                    } else {
+                        self.downloadEstimate.reset(); self.modelDetail = progress.label
+                    }
                     self.updateStatus(self.modelPreparationStatus ?? "Preparing local models…")
                     if progress.stage == .downloading, self.setupWindow == nil { self.showSetup() }
                 }
@@ -196,8 +207,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 await prepareEngines()
             } catch is CancellationError {
                 modelPreparationStatus = "Model setup paused · resume when ready"
+                modelDetail = modelPreparationStatus!
                 updateStatus(modelPreparationStatus!)
             } catch {
+                modelSetupError = error.localizedDescription
                 modelPreparationStatus = error.localizedDescription
                 updateStatus(modelPreparationStatus!)
                 if !isTerminating { showSetup() }
@@ -214,12 +227,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !flag && (!allPermissions || shortcutFailure != nil || listenerFailure != nil ||
                      (!runtimeInitialized && modelPreparationTask == nil)) { showSetup() }
         return true
-    }
-
-    func windowDidResignKey(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === setupWindow,
-              allPermissions, monitoring, window.attachedSheet == nil else { return }
-        window.orderOut(nil)
     }
 
     private var missingPermissions: [String] {
@@ -407,7 +414,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         updateSetupStatus()
-        if guidedPermissionSetup { advancePermissionSetup() }
     }
 
     private func syncHotkey() {
@@ -416,7 +422,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .idle: hotkey.setPhase(.idle)
         case .listening: hotkey.setPhase(.listening)
         case .pending: hotkey.setPhase(.pending)
-        case .loading, .processing, .failedRecording: hotkey.setPhase(.processing)
+        case .loading: hotkey.setPhase(setupController?.isShortcutTest == true ? .idle : .processing)
+        case .processing, .failedRecording: hotkey.setPhase(.processing)
         }
     }
 
@@ -426,7 +433,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hud.onDiscard = { [weak self] in self?.discardPending() }
         hud.onRetry = { [weak self] in self?.retryRecording() }
         hud.onUseOriginal = { [weak self] in self?.useOriginal() }
-        recorder.onLevel = { [weak self] level in self?.hud.updateLevel(level) }
+        recorder.onLevel = { [weak self] level in
+            guard let self else { return }
+            self.hud.updateLevel(level)
+            if self.practiceSession == self.session {
+                self.setupController?.updateRecording(elapsed: RecordingPolicy.elapsed(started: self.captureStarted ?? ProcessInfo.processInfo.systemUptime, now: ProcessInfo.processInfo.systemUptime), level: Double(level))
+            }
+        }
         hotkey.onInputActivity = { [weak self] in
             guard let self else { return }
             self.inserter.invalidateCapture()
@@ -439,8 +452,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func startDictation() {
+    private func startDictation(practice: Bool = false) {
         guard !isTerminating else { return }
+        if !practice, setupController?.isShortcutTest == true {
+            setupController?.detectedShortcut(); syncHotkey(); return
+        }
+        let isPractice = practice || setupController?.acceptsPracticeHotkey == true
         if phase == .failedRecording { showFailedRecording(); return }
         if state.pendingText != nil { showPending(); return }
         guard runtimeInitialized, !editingVocabulary else {
@@ -459,9 +476,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sessionSnapshot = DictationSessionSnapshot(mode: DictationPreferences.mode, vocabulary: vocabulary,
                                                    inputUID: DictationPreferences.inputUID)
         sessionNote = nil
+        if isPractice { practiceSession = token; setupController?.beginPractice(token) }
         settingsController?.stopMicrophoneTest()
         settingsController?.hide()
-        setupWindow?.orderOut(nil)
+        if !isPractice { setupController?.hideForDictation() }
         metrics.begin(token); dismissTask?.cancel()
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         hud.beginSession(token, fallbackScreen: screen)
@@ -471,7 +489,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             try recorder.start(inputUID: sessionSnapshot.inputUID)
             captureStarted = ProcessInfo.processInfo.systemUptime
             metrics.mark("microphoneReady", token)
-            let anchor = originalPID.flatMap {
+            let anchor = isPractice ? nil : originalPID.flatMap {
                 inserter.beginCapture(expectedProcessIdentifier: $0, preserveDestination: true)
             }
             let origin = Task { [inserter] in
@@ -509,6 +527,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             RunLoop.main.add(listeningTimer!, forMode: .common)
         } catch {
             state.finish(token); syncHotkey(); metrics.finish("microphoneFailed", token)
+            if practiceSession == token {
+                practiceSession = nil; setupController?.practiceFailed(error.localizedDescription)
+            }
             updateStatus(error.localizedDescription); hud.show(.error, message: error.localizedDescription)
             dismissHUD(after: 5, for: token)
         }
@@ -520,6 +541,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hud.updateRecording(elapsed: elapsed, remaining: RecordingPolicy.maximumDuration - elapsed,
                             mode: sessionSnapshot.mode.displayName, inputName: recorder.activeInputName,
                             notice: recorder.inputNotice)
+        if practiceSession == token { setupController?.updateRecording(elapsed: elapsed) }
         if elapsed >= RecordingPolicy.maximumDuration { finishDictation(reason: "Five-minute limit reached") }
     }
 
@@ -632,6 +654,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 guard token == session, !Task.isCancelled else { return }
                 metrics.mark("corrected", token)
+                if practiceSession == token {
+                    _ = state.finish(token)
+                    practiceSession = nil; processingTask = nil; targetTask = nil; recoveryNeeded = false
+                    metrics.finish("practiceRecognized", token)
+                    _ = setupController?.finishPractice(result, token: token)
+                    syncHotkey(); hud.hide(); updateStatus(permissionStatus); suspendEnginesIfIdle()
+                    return
+                }
                 guard !isRetry, let destination = await capture?.value, destination.canInsertAutomatically else {
                     hold(result, token: token); return
                 }
@@ -660,12 +690,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dismissTask?.cancel(); recoveryNeeded = true; syncHotkey()
         updateStatus("Recording saved · Retry without speaking again")
         hud.show(.failedRecording, message: message ?? "Retry without speaking again")
+        if practiceSession == session { setupController?.practiceFailed(message ?? "Retry the recording, or discard it.") }
     }
 
     @objc private func retryRecording() {
         guard !isTerminating, !suspending, let recording = failedRecording,
               let token = state.beginRetry() else { return }
-        settingsController?.stopMicrophoneTest(); settingsController?.hide(); setupWindow?.orderOut(nil)
+        let isPractice = practiceSession != nil
+        settingsController?.stopMicrophoneTest(); settingsController?.hide()
+        if isPractice { practiceSession = token; setupController?.beginPractice(token) }
+        else { setupController?.hideForDictation() }
         sessionSnapshot = recording.snapshot
         metrics.begin(token); metrics.mark("stopped", token)
         hud.beginSession(token, fallbackScreen: DictationHUD.activeScreen)
@@ -763,6 +797,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func finishWithoutText(_ message: String, token: UUID) {
         guard state.finish(token) else { return }
         processingTask = nil; targetTask = nil; syncHotkey()
+        if practiceSession == token { practiceSession = nil; setupController?.practiceFailed(message) }
         metrics.finish("noResult", token); updateStatus(message)
         hud.show(.error, message: message); dismissHUD(after: 4, for: token)
         suspendEnginesIfIdle()
@@ -789,6 +824,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func cancelDictation() {
         guard !isTerminating, phase == .listening || phase == .processing else { return }
         let canceled = session
+        if practiceSession == canceled { practiceSession = nil; setupController?.practiceFailed("Practice canceled. Try again when ready.") }
         processingTask?.cancel(); processingTask = nil; targetTask?.cancel(); targetTask = nil
         cleanupTask?.cancel(); cleanupTask = nil; rawInFlight = nil; originalRequestedFor = nil
         processingTimer?.invalidate(); processingTimer = nil; captureStarted = nil
@@ -807,7 +843,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 do {
                     try await self.transcriber.rewarm()
                     guard generation == self.engineGeneration, !Task.isCancelled else { return }
-                    self.engineReady = true; self.suspendEnginesIfIdle()
+                    self.engineReady = true; self.updateSetupStatus(); self.suspendEnginesIfIdle()
                 } catch {}
             }
         }
@@ -843,6 +879,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func discardPending() {
         if phase == .failedRecording, !isTerminating {
+            if practiceSession != nil { practiceSession = nil; setupController?.practiceFailed("Recording discarded. You can try again.") }
             failedRecording?.audio = nil; failedRecording = nil; state.discardRecording()
             sessionNote = nil; recoveryNeeded = false
             syncHotkey(); hud.hide(); updateStatus(permissionStatus); suspendEnginesIfIdle()
@@ -996,16 +1033,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateShortcutAppearance() {
-        shortcutLabel?.stringValue = shortcutConfiguration.displayName
         hud.finishInstruction = usesFn ? "Tap Fn to finish" : "Press \(shortcutConfiguration.displayName) to finish"
         hud.placementInstruction = usesFn ? "Click a text box · tap Fn"
             : "Click a text box · press \(shortcutConfiguration.displayName)"
-        setupSubtitle?.stringValue = usesFn
-            ? "Click a text box. Double-tap Fn / Globe to start. Tap again to finish. If you click away, your text waits: select a text box and tap Fn once to place it."
-            : "Click a text box. Press \(shortcutConfiguration.displayName) once to start and again to finish. If you click away, select the intended text box and press the same shortcut to place your waiting text."
-        keyboardHint?.stringValue = usesFn
-            ? "In Keyboard settings, set “Press 🌐 key to” to “Do Nothing” and make sure Apple Dictation does not use Fn / Globe. Quit Wispr Flow while using the same Fn key."
-            : "Your shortcut is reserved while Local Dictation is running. Choose a combination you do not use in other apps. Function keys may require Fn depending on your keyboard settings."
         updateSetupStatus()
     }
 
@@ -1030,7 +1060,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             self.recordingShortcut = false
             self.resumeShortcut()
-            if !NSApp.isActive, self.allPermissions, self.monitoring { self.setupWindow?.orderOut(nil) }
         })
     }
 
@@ -1075,82 +1104,57 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func showSetup() {
-        if let setupWindow { NSApp.activate(ignoringOtherApps: true); setupWindow.makeKeyAndOrderFront(nil); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 730),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Local Dictation"; window.isReleasedWhenClosed = false; window.center()
-        window.delegate = self
-        let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 16
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        let title = NSTextField(labelWithString: "Speak into any text box")
-        title.font = .systemFont(ofSize: 23, weight: .semibold); stack.addArrangedSubview(title)
-        let subtitle = NSTextField(wrappingLabelWithString: "Click a text box. Double-tap Fn / Globe to start. Tap again to finish. If you click away, your text waits: select a text box and tap Fn once to place it.")
-        subtitle.font = .systemFont(ofSize: 14); stack.addArrangedSubview(subtitle)
-        setupSubtitle = subtitle
-        let shortcutHeading = NSTextField(labelWithString: "Dictation shortcut")
-        shortcutHeading.font = .systemFont(ofSize: 13, weight: .semibold)
-        let shortcut = NSTextField(labelWithString: shortcutConfiguration.displayName)
-        shortcut.font = .systemFont(ofSize: 13, weight: .medium)
-        shortcutLabel = shortcut
-        let change = NSButton(title: "Change…", target: self, action: #selector(changeShortcut))
-        change.bezelStyle = .rounded; shortcutChangeButton = change
-        let reset = NSButton(title: "Use Fn / Globe", target: self, action: #selector(resetShortcut))
-        reset.bezelStyle = .rounded; shortcutResetButton = reset
-        let shortcutRow = NSStackView(views: [shortcut, change, reset])
-        shortcutRow.spacing = 10; shortcutRow.alignment = .centerY
-        let shortcutSection = NSStackView(views: [shortcutHeading, shortcutRow])
-        shortcutSection.orientation = .vertical; shortcutSection.alignment = .leading; shortcutSection.spacing = 6
-        stack.addArrangedSubview(shortcutSection)
-        let wordsButton = NSButton(title: "Custom Words…", target: self, action: #selector(showCustomWords))
-        wordsButton.bezelStyle = .rounded; stack.addArrangedSubview(wordsButton)
-        let permissionTitle = NSTextField(labelWithString: "One-time permissions")
-        permissionTitle.font = .systemFont(ofSize: 13, weight: .semibold); stack.addArrangedSubview(permissionTitle)
-        let permissions = NSStackView(); permissions.orientation = .vertical; permissions.alignment = .leading; permissions.spacing = 5
-        for (label, action) in [("Microphone", #selector(allowMicrophone)), ("Accessibility", #selector(allowAccessibility)), ("Input Monitoring", #selector(allowMonitoring))] {
-            let button = NSButton(title: label, target: self, action: action); button.bezelStyle = .rounded
-            permissionButtons[label] = button
-            let purpose: String
-            switch label {
-            case "Microphone": purpose = "Hear you while dictating"
-            case "Accessibility": purpose = "Place text into your chosen field"
-            default: purpose = "Detect your shortcut across apps"
-            }
-            let explanation = NSTextField(labelWithString: purpose); explanation.font = .systemFont(ofSize: 12)
-            explanation.textColor = .secondaryLabelColor
-            let row = NSStackView(views: [button, explanation]); row.spacing = 10; row.alignment = .centerY
-            permissions.addArrangedSubview(row)
+        // Production recordings/pending text must never become practice data.
+        guard phase == .idle || phase == .loading || practiceSession != nil else { return }
+        if setupController == nil {
+            setupController = SetupController(actions: .init(
+                startModels: { [weak self] in self?.beginModelSetup() },
+                toggleModels: { [weak self] in
+                    guard let self else { return }
+                    if self.runtimeInitialized { self.retryEngines() } else { self.toggleModelSetup() }
+                },
+                allowPermission: { [weak self] step in
+                    switch step {
+                    case .microphone: self?.allowMicrophone()
+                    case .accessibility: self?.allowAccessibility()
+                    case .inputMonitoring: self?.allowMonitoring()
+                    default: break
+                    }
+                },
+                chooseShortcut: { [weak self] in self?.changeShortcut() },
+                useRecommendedShortcut: { [weak self] in
+                    self?.selectShortcut(.custom(keyCode: 49, modifiers: ShortcutConfiguration.control | ShortcutConfiguration.shift, displayName: "Space"))
+                },
+                useFn: { [weak self] in self?.selectShortcut(.fn) },
+                openKeyboard: { [weak self] in self?.openKeyboard() },
+                retryListener: { [weak self] in self?.retryListener() },
+                togglePractice: { [weak self] in
+                    guard let self else { return }
+                    if self.practiceSession == self.session, self.phase == .listening { self.finishDictation() }
+                    else if self.setupController?.isPractice == true { self.startDictation(practice: true) }
+                },
+                retryPractice: { [weak self] in if self?.practiceSession != nil { self?.retryRecording() } },
+                discardPractice: { [weak self] in if self?.practiceSession != nil { self?.discardPending() } },
+                cancelPractice: { [weak self] in if self?.practiceSession != nil { self?.cancelDictation() } },
+                closed: { [weak self] in self?.syncHotkey() },
+                finished: { [weak self] in self?.syncHotkey() }))
         }
-        stack.addArrangedSubview(permissions)
-        let finishSetup = NSButton(title: "Continue setup", target: self, action: #selector(continuePermissionSetup))
-        finishSetup.bezelStyle = .rounded; continueSetupButton = finishSetup
-        let retryListener = NSButton(title: "Retry listener", target: self, action: #selector(retryListener))
-        retryListener.bezelStyle = .rounded; listenerRetryButton = retryListener
-        let setupActions = NSStackView(views: [finishSetup, retryListener]); setupActions.spacing = 8
-        stack.addArrangedSubview(setupActions)
-        let progress = NSProgressIndicator(); progress.style = .bar; progress.isIndeterminate = false
-        progress.minValue = 0; progress.maxValue = 1; progress.translatesAutoresizingMaskIntoConstraints = false
-        let modelsAction = NSButton(title: "Pause model setup", target: self, action: #selector(toggleModelSetup))
-        modelsAction.bezelStyle = .rounded
-        let modelRow = NSStackView(views: [progress, modelsAction]); modelRow.spacing = 10
-        progress.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        modelProgress = progress; modelActionButton = modelsAction; stack.addArrangedSubview(modelRow)
-        let statusLabel = NSTextField(wrappingLabelWithString: "Checking permissions…")
-        statusLabel.font = .systemFont(ofSize: 12); statusLabel.textColor = .secondaryLabelColor
-        setupStatus = statusLabel; stack.addArrangedSubview(statusLabel)
-        let keyboard = NSTextField(wrappingLabelWithString: "In Keyboard settings, set “Press 🌐 key to” to “Do Nothing” and make sure Apple Dictation does not use Fn / Globe. Quit Wispr Flow while using the same Fn key.")
-        keyboard.font = .systemFont(ofSize: 13); keyboardHint = keyboard; stack.addArrangedSubview(keyboard)
-        let keyboardButton = NSButton(title: "Open Keyboard Settings", target: self, action: #selector(openKeyboard))
-        keyboardButton.bezelStyle = .rounded; stack.addArrangedSubview(keyboardButton)
-        let footer = NSTextField(wrappingLabelWithString: "Runs on your Mac. Audio stays temporary. No recordings or transcript history are saved.")
-        footer.font = .systemFont(ofSize: 12); footer.textColor = .secondaryLabelColor; stack.addArrangedSubview(footer)
-        window.contentView!.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 24)
-        ])
-        setupWindow = window; updateShortcutAppearance(); updateSetupStatus()
-        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
+        updateSetupStatus(); setupController?.show(); syncHotkey()
+    }
+
+    private func selectShortcut(_ candidate: ShortcutConfiguration) {
+        guard phase == .idle, !recordingShortcut, !copyInProgress, !isTerminating else { return }
+        let previous = shortcutConfiguration
+        hotkey.stop(); monitoring = false
+        switch hotkey.configure(candidate) {
+        case .failure(let error): shortcutFailure = error.localizedDescription
+        case .success:
+            if HotkeyPreferences.save(candidate) { shortcutConfiguration = candidate; shortcutFailure = nil }
+            else { shortcutConfiguration = previous; shortcutFailure = "The shortcut could not be saved. Try again." }
+        }
+        let error = shortcutFailure
+        resumeShortcut()
+        if let error { shortcutFailure = error; updateStatus(permissionStatus) }
     }
 
     private func updateSetupStatus() {
@@ -1158,24 +1162,23 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsController?.update(.init(status: status, shortcutDisplay: shortcutConfiguration.displayName,
             usesFn: usesFn, canChangeControls: canChange, readiness: correctionStatus,
             setupNeeded: !allPermissions || !runtimeInitialized || !monitoring, vocabularyCount: vocabulary.entries.count))
-        shortcutChangeButton?.isEnabled = canChange
-        shortcutResetButton?.isEnabled = canChange && shortcutConfiguration != .fn
-        let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        let accessibility = TextInserter.accessibilityGranted(), input = FnHotkey.permissionGranted
-        for (name, allowed) in [("Microphone", mic), ("Accessibility", accessibility), ("Input Monitoring", input)] {
-            permissionButtons[name]?.title = allowed ? "✓ \(name)" : "Allow \(name)…"
-            permissionButtons[name]?.isEnabled = !allowed
-        }
-        continueSetupButton?.isHidden = allPermissions
-        continueSetupButton?.isEnabled = !guidedPermissionSetup
-        listenerRetryButton?.isHidden = !allPermissions || monitoring
-        listenerRetryButton?.isEnabled = !monitoring && !isTerminating
-        modelProgress?.isHidden = runtimeInitialized
-        modelActionButton?.isHidden = runtimeInitialized
-        modelActionButton?.title = modelPreparationTask == nil ? "Resume model setup" : "Pause model setup"
-        let shortcutProblem = shortcutFailure.map { "\nShortcut: \($0)" } ?? ""
-        let listener = monitoring ? "Shortcut listener: active" : listenerFailure?.localizedDescription ?? "Shortcut listener: starting"
-        setupStatus?.stringValue = "\(listener)\(shortcutProblem)\n\(modelPreparationStatus ?? correctionStatus)\n\(status)"
+        var snapshot = SetupController.Snapshot()
+        snapshot.readiness.microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        snapshot.readiness.accessibility = TextInserter.accessibilityGranted()
+        snapshot.readiness.inputMonitoring = FnHotkey.permissionGranted
+        snapshot.readiness.modelsReady = runtimeInitialized && (engineReady || practiceSession != nil)
+        snapshot.readiness.listenerActive = monitoring
+        snapshot.readiness.shortcut = shortcutConfiguration
+        snapshot.modelsBusy = modelPreparationTask != nil
+        snapshot.modelFraction = modelFraction
+        snapshot.modelDetail = runtimeInitialized ? (engineReady ? "Local models ready" : "Loading the speech engine. Use Resume setup to retry if this does not finish.") : modelDetail
+        snapshot.modelError = modelSetupError
+        snapshot.listenerError = shortcutFailure ?? listenerFailure?.localizedDescription
+        snapshot.recording = practiceSession == session && phase == .listening
+        snapshot.processing = practiceSession == session && phase == .processing
+        snapshot.retainedRecording = practiceSession == session && phase == .failedRecording
+        snapshot.canChangeShortcut = canChange
+        setupController?.update(snapshot)
     }
 
     @objc private func showCustomWords() {
@@ -1196,26 +1199,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 })
         }
         customWordsController?.show()
-    }
-
-    @objc private func continuePermissionSetup() {
-        guidedPermissionSetup = true; guidedPermissionStep = nil
-        advancePermissionSetup(); updateSetupStatus()
-    }
-
-    private func advancePermissionSetup() {
-        guard guidedPermissionSetup else { return }
-        guard let missing = missingPermissions.first else {
-            guidedPermissionSetup = false; guidedPermissionStep = nil
-            updateSetupStatus(); return
-        }
-        guard guidedPermissionStep != missing else { return }
-        guidedPermissionStep = missing
-        switch missing {
-        case "Microphone": allowMicrophone()
-        case "Accessibility": allowAccessibility()
-        default: allowMonitoring()
-        }
     }
 
     @objc private func allowMicrophone() {

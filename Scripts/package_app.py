@@ -146,8 +146,17 @@ def validate_runtime(runtime, *, verify_digests=True, require_models=True):
             raise RuntimeError('A correction model blob failed integrity verification')
 
 
-def signing_options(identity, identifier, requirement=None):
-    options = ['--force', '--timestamp=none', '--sign', identity, '--identifier', identifier]
+def signing_options(identity, identifier, requirement=None, *, developer_id=False, keychain=None):
+    options = ['--force', '--timestamp' if developer_id else '--timestamp=none',
+               '--sign', identity, '--identifier', identifier]
+    if keychain:
+        options += ['--keychain', str(keychain)]
+    if developer_id:
+        if not re.fullmatch(r'[0-9a-fA-F]{40}', identity):
+            raise RuntimeError('Developer ID signing requires an exact certificate SHA-1 identity')
+        if requirement:
+            raise RuntimeError('Developer ID builds use the Apple-generated designated requirement; unset CODE_SIGN_REQUIREMENT')
+        return options + ['--options', 'runtime']
     if requirement:
         if identity == '-': raise RuntimeError('A certificate-pinned requirement cannot use ad-hoc signing')
         # Exact certificate plus identifier, never an impersonable name or ID alone.
@@ -159,6 +168,20 @@ def signing_options(identity, identifier, requirement=None):
     elif identity != '-':
         raise RuntimeError('Set CODE_SIGN_REQUIREMENT to the exact publisher certificate requirement when using CODE_SIGN_IDENTITY')
     return options
+
+
+def verify_developer_id(app, identifier, team_id):
+    # Keep Apple's generated requirement for continuity across certificate renewals,
+    # but verify both the Apple Developer ID policy and the intended publisher.
+    requirement = (f'anchor apple generic and identifier "{identifier}" and '
+                   f'certificate leaf[subject.OU] = "{team_id}" and '
+                   'certificate leaf[field.1.2.840.113635.100.6.1.13] exists')
+    run('codesign', '--verify', '--strict', '--test-requirement', '=' + requirement, str(app))
+    details = subprocess.run(['codesign', '--display', '--verbose=4', str(app)],
+                             check=True, capture_output=True, text=True).stderr
+    if (f'TeamIdentifier={team_id}' not in details or 'Authority=Developer ID Application:' not in details
+            or 'Timestamp=' not in details or not re.search(r'flags=.*\(runtime\)', details)):
+        raise RuntimeError('Developer ID build lacks its expected publisher, hardened runtime, or secure timestamp')
 
 
 def copy_bytes(source, target, *, verify_readback=True):
@@ -205,6 +228,9 @@ def main():
     parser.add_argument('--runtime', type=Path)
     parser.add_argument('--include-models', action='store_true', help='Optional full offline bundle; default app downloads external models')
     parser.add_argument('--development', action='store_true', help='Use an isolated development bundle identifier')
+    parser.add_argument('--developer-id', action='store_true', help='Sign for Apple notarization with hardened runtime and secure timestamps')
+    parser.add_argument('--team-id', help='Expected Apple Developer Team ID for distribution signing')
+    parser.add_argument('--keychain', type=Path, help='Explicit signing keychain; never changes the default keychain')
     args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
     destination = args.destination.absolute()
@@ -216,11 +242,21 @@ def main():
     validate_executable(args.worker)
     identity = os.environ.get('CODE_SIGN_IDENTITY', '-')
     requirement = os.environ.get('CODE_SIGN_REQUIREMENT')
+    if args.developer_id and not re.fullmatch(r'[A-Z0-9]{10}', args.team_id or ''):
+        raise RuntimeError('Developer ID signing requires --team-id with the expected ten-character Apple Team ID')
+    if args.team_id and not args.developer_id:
+        raise RuntimeError('--team-id requires --developer-id')
     info = plistlib.loads(read_bytes_checked(source / 'Resources/Info.plist'))
     if args.development:
         info['CFBundleIdentifier'] += '.development'
     identifier = info['CFBundleIdentifier']
-    signing_options(identity, identifier, requirement)  # validate before any copy
+    signing_options(identity, identifier, requirement, developer_id=args.developer_id,
+                    keychain=args.keychain)  # validate before any copy
+    entitlements = source / 'Distribution/DeveloperID.entitlements.plist'
+    if args.developer_id:
+        entitlement_data = read_bytes_checked(entitlements)
+        if plistlib.loads(entitlement_data) != {'com.apple.security.device.audio-input': True}:
+            raise RuntimeError('Developer ID app must use only the microphone entitlement')
     existing_plist = destination / 'Contents/Info.plist'
     if existing_plist.exists():
         existing_identifier = plistlib.loads(read_bytes_checked(existing_plist)).get('CFBundleIdentifier')
@@ -246,7 +282,14 @@ def main():
         copy_bytes(args.worker, contents / 'Resources/whisper-worker')
         write_bytes_checked(contents / 'Info.plist', plistlib.dumps(info))
         for resource in (source / 'Resources').iterdir():
-            if resource.name != 'Info.plist': copy_bytes(resource, contents / 'Resources' / resource.name)
+            if resource.name == 'StartHere.html' and args.developer_id:
+                guide = read_text_checked(resource)
+                guide, count = re.subn(r'<!-- COMMUNITY-OPENING -->.*?<!-- /COMMUNITY-OPENING -->',
+                                      '<p>Confirm <strong>Open</strong> if macOS asks before the first launch.</p>',
+                                      guide, flags=re.DOTALL)
+                if count != 1: raise RuntimeError('Setup guide is missing its community-build opening section')
+                write_bytes_checked(contents / 'Resources' / resource.name, guide.encode('utf-8'))
+            elif resource.name != 'Info.plist': copy_bytes(resource, contents / 'Resources' / resource.name)
         names = ['ollama', 'Licenses'] + (['Models'] if args.include_models else [])
         for name in names:
             copy_bytes(runtime / name, contents / 'Resources' / name)
@@ -258,7 +301,12 @@ def main():
         clean_finder_metadata(stage)
         for path, code_id in [(contents / 'Resources/whisper-worker', identifier + '.whisper-worker'),
                               (contents / 'Resources/ollama', identifier + '.ollama'), (stage, identifier)]:
-            run('codesign', *signing_options(identity, code_id, requirement), str(path))
+            options = signing_options(identity, code_id, requirement,
+                                      developer_id=args.developer_id, keychain=args.keychain)
+            if args.developer_id and path == stage:
+                options += ['--entitlements', str(entitlements)]
+            run('codesign', *options, str(path))
+            if args.developer_id: verify_developer_id(path, code_id, args.team_id)
         run('codesign', '--verify', '--deep', '--strict', str(stage))
         running = subprocess.check_output(['ps', '-axo', 'comm='], text=True).splitlines()
         if expected_process in [line.strip() for line in running]:

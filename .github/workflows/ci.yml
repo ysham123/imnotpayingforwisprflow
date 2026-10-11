@@ -34,6 +34,8 @@ jobs:
         run: bash Scripts/test-shortcut-recorder.sh .test-build/shortcut-recorder --compile-only
       - name: Session and diagnostics regressions
         run: bash Scripts/test-session.sh
+      - name: Guided setup state and native UI compilation
+        run: bash Scripts/test-setup.sh
       - name: Settings and login-state regressions
         run: bash Scripts/test-settings.sh
       - name: Listener recovery and permission diagnostics
@@ -86,5 +88,6 @@ jobs:
         run: |
           python3 Tests/PackagingSmoke.py
           python3 Tests/ThinReleaseSmoke.py
+          python3 Tests/NotarizationSmoke.py
           python3 Tests/RealSigningSmoke.py
           python3 Tests/InstallerSmoke.py

@@ -26,20 +26,32 @@ LOCAL_DICTATION_BUILD_DIR="$HOME/Library/Caches/LocalDictation-build" \
 LOCAL_DICTATION_RUNTIME="/Applications/Local Dictation.app/Contents/Resources" \
 bash Scripts/build.sh "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app"
 
-python3 Scripts/make-release.py \
+python3 -m venv .build-native/dmg-tools
+.build-native/dmg-tools/bin/python -m pip install -r Scripts/dmg-requirements.txt
+
+.build-native/dmg-tools/bin/python Scripts/make-release.py \
   "$HOME/Library/Caches/LocalDictation-build/Local Dictation.app" \
-  "$HOME/Library/Caches/LocalDictation-release" --tag v2.0.0
+  "$HOME/Library/Caches/LocalDictation-release" --tag v2.1.0
+```
+
+The pinned Python packages are build tools only; recipients need none of them. The DMG uses Finder metadata written by `dmgbuild`, with the app, an Applications shortcut, and Retina installation artwork. Recipients drag the app to Applications, eject the image, and open the installed copy. Opening the disk-image copy shows placement guidance before any permissions, hotkeys, or models are initialized.
+
+The original app icon is bundled as `Resources/AppIcon.icns`. To regenerate all icon sizes and the disk-image backgrounds:
+
+```bash
+swift Scripts/create-artwork.swift "$PWD"
+iconutil -c icns .build-native/AppIcon.iconset -o Resources/AppIcon.icns
 ```
 
 Choose an empty release directory. The output contains `Local-Dictation.dmg`, model/release manifests, and SHA256SUMS. DMG creation copies the already-signed bundle without re-signing. Installation also preserves that signature. Finalize every executable/resource before signing.
 
-`RuntimePaths` supplies sealed executables and external model paths to both engines. Models live in `~/Library/Application Support/Local Dictation/Models`; saved shortcuts/words remain in local preferences. Compatible verified v1.2 weights migrate before replacement. Production downloads use system curl, HTTPS-only redirects, resumable partial files, file locks, disk-space checks, and size/SHA256 verification before atomic publication.
+`RuntimePaths` supplies sealed executables and external model paths to both engines. Models live in `~/Library/Application Support/Local Dictation/Models`; saved shortcuts/words remain in local preferences. The drag installer reuses already externalized model caches. An update directly from v1.2 may need to download its previously bundled weights again; keep the old bundle until that upgrade is complete. The legacy install transaction and model migration code remain covered by regression tests. Production downloads use system curl, HTTPS-only redirects, resumable partial files, file locks, disk-space checks, and size/SHA256 verification before atomic publication.
 
 For development, invoke `Scripts/package_app.py` with `--development` to use `dev.yosef.localdictation.development`, separate preferences/model storage, and no self-install into the public location. A development build cannot replace the public bundle. `--include-models` is an optional legacy/offline package mode and is rejected by the thin-release generator.
 
-Current releases use ad-hoc signing. Non-ad-hoc builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
+The stable v2.0.1 release uses ad-hoc signing. The [Developer ID distribution workflow](DEVELOPER-ID.md) prepares the 2.1.0 public preview with hardened runtime, secure timestamps, and Apple notarization. Fresh-Mac validation is still required before promoting the preview to stable. Creator self-signed builds require both `CODE_SIGN_IDENTITY` and `CODE_SIGN_REQUIREMENT`; the latter must pin the exact certificate leaf hash and application identifier. Developer ID builds retain Apple's generated designated requirement and verify the expected team. Key material belongs outside Git. Never use an identifier-only requirement or re-sign a publisher-signed app with ad-hoc identity.
 
-The isolated free self-signed experiment could not establish a system-trusted signing identity without trust changes. It does not demonstrate recipient TCC grant retention. Self-signing is therefore not adopted for distribution; ad-hoc updates may still require permission renewal. No Apple notarization, automatic updater, or trust import is included.
+The isolated free self-signed experiment could not establish a system-trusted signing identity without trust changes. It does not demonstrate recipient TCC grant retention. Self-signing is therefore not adopted for distribution; ad-hoc updates may still require permission renewal. The new notarization tooling does not automatically publish a release, update the app, or change certificate trust.
 
 For repeated permission setup, first run `python3 Scripts/diagnose-permissions.py`
 against the unchanged installation. It separates observed changed-build gaps,
@@ -76,6 +88,7 @@ bash Scripts/test-transcriber.sh
 bash Scripts/test-worker-faults.sh
 python3 Tests/PackagingSmoke.py
 python3 Tests/ThinReleaseSmoke.py
+python3 Tests/NotarizationSmoke.py
 python3 Tests/RealSigningSmoke.py
 python3 Tests/InstallerSmoke.py
 ```

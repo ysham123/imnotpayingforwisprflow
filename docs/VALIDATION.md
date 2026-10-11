@@ -1,6 +1,17 @@
 # Release validation
 
-This records the v2.0.1 public package, its earlier candidate checks, and historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+This records the v2.1.0 public preview, the v2.0.1 stable package, earlier candidate checks, and historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+
+## 2.1.0 public preview, 2026-10-11
+
+The creator authorized a clearly labeled public preview while first-time recipient validation remains open. Version **2.1.0 build 14** adds the native app icon, drag-to-Applications DMG, and guided setup. The signed payload was packaged from source commit `2c4991742e0be61caa503c79546c047a7bae5e98`; its complete GitHub macOS checks passed.
+
+- The app, speech worker, and Ollama helper have Developer ID signatures, secure timestamps, and hardened runtime. The main app has the microphone entitlement. Both app and DMG received Apple Accepted results; stapled-ticket and Gatekeeper checks pass.
+- The final DMG is **13,608,696 bytes**, SHA-256 `25f81f5cd9c90911edf21dee5b42f875658d5db2a83282c93782f7a8968bfd7b`. The final manifest and all checksums match the signed and stapled bytes.
+- Finder shows the app icon, Applications shortcut, and Retina installation artwork. A real copy from the mounted DMG into an isolated Applications folder retained its signature and ticket and passed Gatekeeper.
+- Guided setup state, permission/shortcut/practice ownership, model downloads, packaging, real signing, and resumable-notarization checks pass. Native fixture renders also include the bundled app icon.
+
+A complete fresh-Mac permission grant, first model download, shortcut check, practice dictation, and external insertion run remains **unverified**. Passing automated checks and notarization do not establish every editor or recipient Mac. The preview is published with this limit disclosed; v2.0.1 remains the latest stable release. See [2.1.0 preview notes](releases/v2.1.0.md).
 
 ## 2.0.1 public package, 2026-10-09
 
