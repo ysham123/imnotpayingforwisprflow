@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.1 public preview
+
+- Keep recording through compatible microphone configuration notifications instead of reporting a false microphone change. Recover a stopped engine with bounded restart attempts; actual input changes or disconnections retain the captured speech.
+- Retained Microphone, Accessibility, and Input Monitoring approvals across the 2.2.0 → 2.2.1 update on the development Mac. Other Macs remain unverified.
+- Signed and notarized app and drag-to-Applications installer. Real microphone preview checks and creator-reported dictation passed; complete fresh-Mac setup remains unverified.
+- See [release notes](docs/releases/v2.2.1.md) for checks and remaining limits.
+
+## 2.2.0 public preview
+
+- Added a Home window, Dock icon, native sidebar, and standard Mac menus.
+- Made microphone selection and testing available while speech models load, fixed selection persistence during testing, and added direct microphone permission controls.
+- See [release notes](docs/releases/v2.2.0.md).
+
+## 2.1.0 public preview
+
+- Added guided permissions, verified model downloads with pause/resume, shortcut detection, and practice dictation inside setup.
+- Added Developer ID signing, Apple notarization, an original app icon, and a two-icon drag-to-Applications installer.
+- See [release notes](docs/releases/v2.1.0.md).
+
 ## 2.0.1 (2026-10-09)
 
 - Keep the original verified field and caret attached to a recording when you click, scroll, or switch applications. At delivery, restore that destination when its text and window still match. The original application may come forward to receive the paste.

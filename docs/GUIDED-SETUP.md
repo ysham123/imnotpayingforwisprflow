@@ -10,9 +10,11 @@ Setup confirms actual macOS permission probes. It never approves permissions its
 
 Control-Shift-Space is offered as an optional preset; existing shortcuts remain unchanged until the user selects it. Setup requires an actual detected key press before practice. Fn remains available with Keyboard Settings guidance.
 
+For Fn / Globe, open **System Settings → Keyboard**. First set **Dictation → Shortcut** to a different gesture, such as **Press Right Command Key Twice**. Then set **Press 🌐 key to** to **Do Nothing** near the top of the page. These are separate settings: moving Apple Dictation off Fn can still leave the key opening **Emoji & Symbols**. Local Dictation does not change either setting automatically.
+
 Practice uses the production recorder, transcription, selected mode, and cleanup pipeline. Its session token owns the result. The result is displayed inside setup and never sent to TextInserter or stored as Copy last result. Canceled/stale results cannot finish setup. Closing setup cancels active practice, discards retained practice audio, and clears the displayed transcript. Recognition failures retain audio for retry while setup stays open. The test demonstrates local recognition, not compatibility with every external editor.
 
-The DMG displays the app with its original blue voice icon beside an Applications shortcut, with a Retina background explaining the drag operation. Extra opening guides are bundled but hidden from the main two-icon layout. Drag the app to Applications, eject the image, and launch the installed copy. The disk-image copy explains placement and quits before permissions, hotkeys, or model initialization. The website download and guide describe the 2.2.0 public preview.
+The DMG displays the app with its original blue voice icon beside an Applications shortcut, with a Retina background explaining the drag operation. Extra opening guides are bundled but hidden from the main two-icon layout. Drag the app to Applications, eject the image, and launch the installed copy. The disk-image copy explains placement and quits before permissions, hotkeys, or model initialization. The website download and guide describe the 2.2.1 public preview.
 
 ## Validation
 

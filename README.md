@@ -69,7 +69,7 @@ Saved shortcuts and custom words remain local and survive updates. Models live o
 
 The bundled runtime needs no separate Ollama installation. For an offline Mac, complete setup while connected first. The [v1.2 offline installer](https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v1.2.0) remains available for its historical release.
 
-The transition from an ad-hoc or creator self-signed build to Developer ID may require renewed permissions. Retention across later Developer ID updates has not yet been tested. The installer never re-signs the app or changes certificate trust.
+The transition from an ad-hoc or creator self-signed build to Developer ID may require renewed permissions. Microphone, Accessibility, and Input Monitoring approvals were retained across the 2.2.0 → 2.2.1 update on the development Mac; retention on other Macs remains unverified. The installer never re-signs the app or changes certificate trust.
 
 
 </details>
@@ -92,11 +92,10 @@ Complete the shortcut check and practice dictation inside setup. The permission 
 
 To keep the default **Fn / Globe** gesture, free up that key in **System Settings → Keyboard**:
 
-- Set **Press 🌐 key to** to **Do Nothing**.
-- Make sure Apple's built-in Dictation shortcut does not use Fn / Globe.
-- Quit other dictation apps using that key, including Wispr Flow.
+1. Under **Dictation → Shortcut**, choose a different key, such as **Press Right Command Key Twice**.
+2. Then set **Press 🌐 key to** to **Do Nothing** near the top of Keyboard settings. This is a separate setting; changing Apple's Dictation shortcut alone can still leave Fn opening emoji.
 
-Local Dictation does not change these settings automatically.
+Quit other dictation apps using that key, including Wispr Flow. Local Dictation does not change these settings automatically.
 
 For a custom shortcut, open **Settings… → Shortcuts → Change shortcut…**, then press your preferred combination. Use **Command**, **Control**, or **Option** plus a key; **Shift** can be added. **F1–F20** also work without modifiers or with Shift alone. Other bare keys, Shift-only combinations, and reserved shortcuts such as Command-C, Command-V, and Command-Tab are rejected. Press Escape or switch to another app to cancel the change.
 
@@ -128,6 +127,8 @@ If the original text changed, the destination disappeared, or placement cannot b
 <p align="center">
   <img src=".github/assets/status-ready.png" alt="Text ready. Click a text box, then tap Fn. Copy and Discard buttons." width="392" />
 </p>
+
+**Copy** and **Copy last result** copy the final result offered for insertion. In Clean mode this includes accepted cleanup; Verbatim or **Use original** keeps the recognized transcript. If cleanup falls back, the affected text stays as dictated. Copy does not run another cleanup step.
 
 Completion feedback disappears quickly, or immediately when you click elsewhere. Clipboard cleanup continues in the background without reopening the pill. Only unsent text that still needs placement remains visible.
 
@@ -198,6 +199,7 @@ The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting 
 | What you see | What to do |
 |---|---|
 | Fn does nothing | Open Settings, check the exact status, and remove competing Fn shortcuts. If permissions are allowed but the listener failed, choose **Retry shortcut listener**. |
+| Fn opens emoji or Apple Dictation too | In **System Settings → Keyboard**, first move **Dictation → Shortcut** away from Fn / Globe, then set **Press 🌐 key to** to **Do Nothing**. These are separate settings. |
 | Fn does nothing on an external keyboard | Try the Mac's built-in Fn / Globe key. Some third-party keyboards handle Fn internally and do not send an event macOS can detect. |
 | Custom shortcut is rejected or already registered | Choose another combination, or close the chooser to resume your saved shortcut. If that shortcut is unavailable, choose another or reset with **Settings… → Shortcuts → Use Fn / Globe**. |
 | Custom shortcut also triggers an action in another app | Choose an unused combination. Registration conflict checks cannot detect every app-specific shortcut. |
@@ -223,10 +225,10 @@ Rich editors can update their accessibility text after the paste has already app
 Current limits:
 
 - English recognition; no language selector in this release.
-- Dictation stops automatically after about **115 seconds**.
-- Cleanup supports up to **1,500 characters** per request; longer text uses the original transcript.
+- Dictation stops automatically after **five minutes**.
+- Long Clean transcripts use bounded cleanup passages. If a passage cannot be safely cleaned or processing reaches its limit, the corresponding text stays as dictated.
 - Password and read-only fields do not receive automatic insertion.
-- Ad-hoc app updates may require permission approval again.
+- Upgrading from an older ad-hoc or creator self-signed app may require permission approval again.
 - No Intel Mac, Windows, or Linux binary.
 
 On an M2 Pro with 16 GB RAM, the v1.3 benchmark build processed a 2.67-second synthetic dictation with custom words in a **1.39-second warm median** (1.46-second p95 across 20 runs). A 32.46-second clip took a 5.37-second median (5.68-second p95 across 10 runs). These pre-release measurements include recognition and cleanup, excluding microphone startup, model warming, and text delivery; the final name-retention guard was checked separately for correctness. Custom words improved short-clip spelling, but two speech fixtures still missed a saved term. See the [paired measurements and spelling limits](docs/VALIDATION.md#v13-warm-processing-measurements). Models stay warm during ordinary use and are released when idle under memory pressure or on sleep; loading them again takes longer.
