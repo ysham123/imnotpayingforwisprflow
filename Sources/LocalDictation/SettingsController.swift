@@ -3,8 +3,8 @@ import AVFoundation
 import DictationCore
 import ServiceManagement
 
-/// Ordinary preferences stay open when another app activates. First-run setup
-/// remains a separate flow, entered through the supplied setup action.
+/// The app's ordinary window: home, microphone, and preferences. Setup remains
+/// a guided flow entered through a visible action on the home screen.
 @MainActor
 final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
     struct Snapshot {
@@ -15,13 +15,17 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
         var readiness: String
         var setupNeeded: Bool
         var vocabularyCount: Int
+        var canChangeAudioControls: Bool? = nil
+        var audioRestriction: String? = nil
+
+        var audioControlsAvailable: Bool { canChangeAudioControls ?? canChangeControls }
 
         static let initial = Snapshot(status: "Starting…", shortcutDisplay: "Fn / Globe", usesFn: true,
             canChangeControls: false, readiness: "Checking readiness…", setupNeeded: true, vocabularyCount: 0)
     }
 
     enum Action: CaseIterable, Hashable {
-        case changeShortcut, resetShortcut, customWords, setup
+        case changeShortcut, resetShortcut, customWords, setup, allowMicrophone
         case retryEngines, retryListener, exportMetrics, exportPermissions
     }
 
@@ -35,6 +39,7 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
         var exportMetrics: () -> Void
         var exportPermissions: () -> Void
         var preferencesChanged: () -> Void = {}
+        var allowMicrophone: () -> Void = {}
 
         func perform(_ action: Action) {
             switch action {
@@ -42,6 +47,7 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
             case .resetShortcut: resetShortcut()
             case .customWords: customWords()
             case .setup: setup()
+            case .allowMicrophone: allowMicrophone()
             case .retryEngines: retryEngines()
             case .retryListener: retryListener()
             case .exportMetrics: exportMetrics()
@@ -59,6 +65,7 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
         func permits(_ action: Action) -> Bool {
             switch action {
             case .setup, .exportMetrics, .exportPermissions: return true
+            case .allowMicrophone: return snapshot.audioControlsAvailable
             case .resetShortcut: return snapshot.canChangeControls && !snapshot.usesFn
             default: return snapshot.canChangeControls
             }
@@ -74,7 +81,26 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
     let window: NSWindow
     private var state: State
     private let login: LoginItemController
-    private let preview = AudioRecorder()
+    struct AudioEnvironment {
+        var authorizationStatus: () -> AVAuthorizationStatus
+        var devices: () -> [AudioInputDevice]
+        var resolve: (String?) throws -> AudioInputResolution
+        static var live: Self { .init(authorizationStatus: { AVCaptureDevice.authorizationStatus(for: .audio) },
+            devices: { AudioInputProvider.devices() }, resolve: { try AudioInputProvider.resolve(uid: $0) }) }
+    }
+    private let preview: any MicrophonePreview
+    private let audio: AudioEnvironment
+    private let preferences: UserDefaults
+    private let tabs = NSTabView()
+    private var navigationButtons: [NSButton] = []
+    private let homeTitle = NSTextField(wrappingLabelWithString: "Welcome to Local Dictation")
+    private let homeDetail = NSTextField(wrappingLabelWithString: "")
+    private let homeShortcut = NSTextField(wrappingLabelWithString: "")
+    private let homeMicrophone = NSTextField(wrappingLabelWithString: "")
+    private let homeSetup = NSButton()
+    private let audioPermission = NSTextField(wrappingLabelWithString: "")
+    private let audioAvailability = NSTextField(wrappingLabelWithString: "")
+    private var permissionButton: NSButton?
     private let modePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let modeDetail = NSTextField(wrappingLabelWithString: "")
     private let loginButton = NSButton(checkboxWithTitle: "Open Local Dictation at login", target: nil, action: nil)
@@ -91,29 +117,34 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
     private let wordsLabel = NSTextField(labelWithString: "")
     private let readinessLabel = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
-    private var actionButtons: [Action: NSButton] = [:]
+    private var actionButtons: [Action: [NSButton]] = [:]
     private var refreshTimer: Timer?
     private var observers: [NSObjectProtocol] = []
 
-    init(actions: Actions, loginEnvironment: LoginItemController.Environment? = nil) {
+    init(actions: Actions, loginEnvironment: LoginItemController.Environment? = nil,
+         audioEnvironment: AudioEnvironment? = nil, preview: (any MicrophonePreview)? = nil,
+         preferences: UserDefaults? = nil) {
         state = State(actions: actions)
         login = LoginItemController(environment: loginEnvironment)
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 740, height: 560),
+        self.preview = preview ?? AudioRecorder()
+        audio = audioEnvironment ?? .live
+        self.preferences = preferences ?? .standard
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init()
-        window.title = "Local Dictation Settings"
+        window.title = "Local Dictation"
         window.identifier = .init("dictation-settings")
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 670, height: 440)
+        window.minSize = NSSize(width: 780, height: 520)
         window.delegate = self
         window.center()
         buildWindow()
-        preview.onLevel = { [weak self] level in
+        self.preview.onLevel = { [weak self] level in
             // Display a useful speech range without exposing or storing samples.
             let decibels = 20 * log10(max(0.000_001, Double(level)))
             self?.testMeter.doubleValue = max(0, min(1, (decibels + 60) / 60))
         }
-        preview.onAutomaticStop = { [weak self] in self?.stopMicrophoneTest() }
+        self.preview.onAutomaticStop = { [weak self] in self?.stopMicrophoneTest() }
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: NSApplication.didResignActiveNotification,
             object: nil, queue: .main) { [weak self] _ in
@@ -134,7 +165,8 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
     }
 
-    func show() {
+    func show(section: String? = nil) {
+        if let section { selectSection(section) }
         refreshExternalState()
         if refreshTimer == nil {
             let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
@@ -166,12 +198,17 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
     func windowDidBecomeKey(_ notification: Notification) { refreshExternalState() }
 
     func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
-        if tabViewItem?.identifier as? String != "Audio" { stopMicrophoneTest() }
+        if tabViewItem?.identifier as? String != "Microphone" { stopMicrophoneTest() }
+        for (index, button) in navigationButtons.enumerated() {
+            let selected = tabView.selectedTabViewItem === tabView.tabViewItems[index]
+            button.state = selected ? .on : .off
+            button.font = .systemFont(ofSize: 13, weight: selected ? .bold : .regular)
+        }
     }
 
     func update(_ snapshot: Snapshot) {
         state.snapshot = snapshot
-        if !snapshot.canChangeControls { stopMicrophoneTest() }
+        if !snapshot.audioControlsAvailable { stopMicrophoneTest() }
         statusLabel.stringValue = snapshot.status
         readinessLabel.stringValue = snapshot.readiness
         shortcutLabel.stringValue = snapshot.shortcutDisplay
@@ -179,11 +216,20 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
             ? "Double-tap Fn / Globe to start. Tap once to finish. In Keyboard Settings, set the Globe key to Do Nothing and choose a different shortcut for Apple Dictation."
             : "Press your shortcut once to start and again to finish. Choose a combination you do not use in other apps."
         wordsLabel.stringValue = snapshot.vocabularyCount == 1 ? "1 custom word saved" : "\(snapshot.vocabularyCount) custom words saved"
-        for (action, button) in actionButtons { button.isEnabled = state.permits(action) }
-        actionButtons[.setup]?.title = snapshot.setupNeeded ? "Finish setup…" : "Review setup…"
+        for (action, buttons) in actionButtons { buttons.forEach { $0.isEnabled = state.permits(action) } }
+        homeSetup.title = snapshot.setupNeeded ? "Start or resume setup" : "Review setup & try dictation"
+        homeSetup.isEnabled = snapshot.audioControlsAvailable
+        homeTitle.stringValue = !snapshot.audioControlsAvailable ? "Finish your current action."
+            : (snapshot.setupNeeded ? "Let's get your Mac ready." : "Ready for your next thought.")
+        homeDetail.stringValue = !snapshot.audioControlsAvailable ? snapshot.status : (snapshot.setupNeeded
+            ? "Setup walks you through permissions, local models, and your first sentence. You can check your microphone while models load."
+            : "Click a text box in your usual app, use your shortcut, and speak. Local Dictation works on your Mac.")
+        homeShortcut.stringValue = snapshot.usesFn ? "Double-tap Fn / Globe to start. Tap once to finish." : "\(snapshot.shortcutDisplay) starts and finishes dictation."
         modePicker.isEnabled = snapshot.canChangeControls
-        inputPicker.isEnabled = snapshot.canChangeControls
-        testButton.isEnabled = snapshot.canChangeControls
+        inputPicker.isEnabled = snapshot.audioControlsAvailable
+        testButton.isEnabled = snapshot.audioControlsAvailable
+        audioAvailability.stringValue = snapshot.audioControlsAvailable ? "Changes apply to your next dictation." : (snapshot.audioRestriction ?? "Finish the current dictation or recovery action to change the microphone.")
+        refreshAudioPermission()
         refreshMode()
     }
 
@@ -200,12 +246,12 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
     }
 
     private func buildWindow() {
-        let tabs = NSTabView()
         tabs.delegate = self
+        tabs.tabViewType = .noTabsNoBorder
         tabs.translatesAutoresizingMaskIntoConstraints = false
         tabs.identifier = .init("settings-sections")
         let sections: [(String, NSView)] = [
-            ("General", generalSection()), ("Audio", audioSection()),
+            ("Home", homeSection()), ("Microphone", audioSection()), ("General", generalSection()),
             ("Shortcuts", shortcutSection()), ("Custom Words", wordsSection()),
             ("Advanced", advancedSection())
         ]
@@ -213,15 +259,38 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
             let item = NSTabViewItem(identifier: name)
             item.label = name; item.view = view; tabs.addTabViewItem(item)
         }
+        let sidebar = NSStackView()
+        sidebar.orientation = .vertical; sidebar.alignment = .leading; sidebar.spacing = 10
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        let brand = NSTextField(labelWithString: "Local Dictation")
+        brand.font = .systemFont(ofSize: 16, weight: .bold)
+        sidebar.addArrangedSubview(brand)
+        let subtitle = NSTextField(labelWithString: "On your Mac")
+        subtitle.font = .systemFont(ofSize: 11); subtitle.textColor = .secondaryLabelColor
+        sidebar.addArrangedSubview(subtitle)
+        sidebar.addArrangedSubview(separator())
+        for (index, section) in sections.enumerated() {
+            let button = NSButton(title: section.0, target: self, action: #selector(navigate(_:)))
+            button.bezelStyle = .recessed; button.setButtonType(.pushOnPushOff)
+            button.alignment = .left; button.font = .systemFont(ofSize: 13, weight: .medium)
+            button.tag = index; button.identifier = .init("navigate-\(section.0)")
+            button.widthAnchor.constraint(equalToConstant: 150).isActive = true
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 34).isActive = true
+            button.state = index == 0 ? .on : .off
+            navigationButtons.append(button); sidebar.addArrangedSubview(button)
+        }
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.maximumNumberOfLines = 2
         statusLabel.identifier = .init("settings-status")
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         let content = window.contentView!
-        content.addSubview(tabs); content.addSubview(statusLabel)
+        content.addSubview(sidebar); content.addSubview(tabs); content.addSubview(statusLabel)
         NSLayoutConstraint.activate([
-            tabs.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            sidebar.topAnchor.constraint(equalTo: content.topAnchor, constant: 26),
+            sidebar.widthAnchor.constraint(equalToConstant: 150),
+            tabs.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: 16),
             tabs.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             tabs.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
             tabs.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -12),
@@ -230,6 +299,39 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
             statusLabel.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14)
         ])
     }
+
+    @objc private func navigate(_ sender: NSButton) {
+        guard tabs.tabViewItems.indices.contains(sender.tag) else { return }
+        tabs.selectTabViewItem(at: sender.tag)
+        refreshExternalState()
+    }
+
+    private func homeSection() -> NSView {
+        homeTitle.font = .systemFont(ofSize: 28, weight: .bold)
+        homeTitle.identifier = .init("home-title")
+        homeSetup.title = "Start or resume setup"
+        homeSetup.bezelStyle = .rounded
+        homeSetup.controlSize = .large
+        homeSetup.target = self; homeSetup.action = #selector(openSetup)
+        homeSetup.identifier = .init("home-setup")
+        let microphone = NSButton(title: "Choose & test microphone", target: self, action: #selector(openAudio))
+        microphone.bezelStyle = .rounded; microphone.identifier = .init("home-microphone")
+        let shortcut = NSButton(title: "Change shortcut", target: self, action: #selector(openShortcuts))
+        shortcut.bezelStyle = .rounded
+        return section(title: "Your voice, on your Mac", views: [
+            homeTitle, detail(homeDetail), homeSetup, separator(),
+            heading("Microphone"), detail(homeMicrophone), microphone,
+            separator(), heading("Your shortcut"), detail(homeShortcut), shortcut,
+            note("Keep this app in your Dock to find it easily. Closing this window keeps the dictation shortcut running. Choose Quit Local Dictation to stop the app.")
+        ])
+    }
+
+    private func selectSection(_ name: String) {
+        if let item = tabs.tabViewItems.first(where: { $0.identifier as? String == name }) { tabs.selectTabViewItem(item) }
+    }
+    @objc private func openAudio() { selectSection("Microphone"); refreshExternalState() }
+    @objc private func openShortcuts() { selectSection("Shortcuts") }
+    @objc private func openSetup() { stopMicrophoneTest(); state.perform(.setup) }
 
     private func generalSection() -> NSView {
         modePicker.identifier = .init("dictation-mode")
@@ -265,7 +367,11 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
         testMeter.setAccessibilityLabel("Microphone input level")
         testMeter.widthAnchor.constraint(equalToConstant: 240).isActive = true
         let testRow = NSStackView(views: [testButton, testMeter]); testRow.spacing = 14; testRow.alignment = .centerY
+        permissionButton = actionButton("Allow microphone", .allowMicrophone)
+        permissionButton?.identifier = .init("allow-microphone")
+        audioAvailability.textColor = .secondaryLabelColor
         return section(title: "Choose your microphone", views: [
+            detail(audioPermission), permissionButton!, detail(audioAvailability), separator(),
             heading("Input device"), inputPicker, detail(inputDetail), detail(inputNotice),
             note("System Default follows the microphone selected in macOS. A saved microphone that is unavailable falls back to the system input for the next recording."),
             separator(), heading("Microphone test"), testRow, detail(testDetail),
@@ -367,7 +473,7 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
         button.bezelStyle = .rounded
         button.tag = Action.allCases.firstIndex(of: action)!
         button.identifier = .init("settings-action-\(action)")
-        actionButtons[action] = button
+        actionButtons[action, default: []].append(button)
         return button
     }
 
@@ -381,12 +487,12 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
         guard state.snapshot.canChangeControls,
               let raw = modePicker.selectedItem?.representedObject as? String,
               let mode = DictationMode(rawValue: raw) else { refreshMode(); return }
-        DictationPreferences.mode = mode
+        DictationPreferences.saveMode(mode, to: preferences)
         refreshMode(); state.actions.preferencesChanged()
     }
 
     private func refreshMode() {
-        let mode = DictationPreferences.mode
+        let mode = DictationPreferences.loadMode(from: preferences)
         modePicker.selectItem(at: DictationMode.allCases.firstIndex(of: mode) ?? 0)
         modeDetail.stringValue = mode == .clean
             ? "Clean removes hesitation and repetition, adds punctuation, and applies clear spoken corrections."
@@ -394,16 +500,19 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
     }
 
     @objc private func changeInput() {
-        guard state.snapshot.canChangeControls else { refreshAudioDevices(); return }
+        guard state.snapshot.audioControlsAvailable else { refreshAudioDevices(); return }
+        // Stopping a test refreshes the picker to the old saved choice. Capture
+        // the newly clicked item before stopping, or the change is lost.
+        let chosenUID = inputPicker.selectedItem?.representedObject as? String
         stopMicrophoneTest()
-        DictationPreferences.inputUID = inputPicker.selectedItem?.representedObject as? String
+        DictationPreferences.saveInputUID(chosenUID, to: preferences)
         refreshAudioDevices(); state.actions.preferencesChanged()
     }
 
     private func refreshAudioDevices() {
         // Keep an unavailable preference visible instead of silently overwriting it.
-        let selectedUID = DictationPreferences.inputUID
-        let devices = AudioInputProvider.devices()
+        let selectedUID = DictationPreferences.loadInputUID(from: preferences)
+        let devices = audio.devices()
         let entries = [("System Default", nil as String?)] + devices.map { ($0.name, Optional($0.uid)) }
             + ((selectedUID != nil && !devices.contains(where: { $0.uid == selectedUID }))
                 ? [("Saved microphone (unavailable)", selectedUID)] : [])
@@ -421,25 +530,27 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
             return
         }
         do {
-            let resolved = try AudioInputProvider.resolve(uid: selectedUID)
+            let resolved = try audio.resolve(selectedUID)
             inputDetail.stringValue = "Next recording: \(resolved.device.name)"
+            homeMicrophone.stringValue = resolved.device.name
             inputNotice.stringValue = resolved.fallbackNotice ?? ""
         } catch {
             inputDetail.stringValue = "No microphone is available."
+            homeMicrophone.stringValue = "Connect a microphone, then open Microphone to check it."
             inputNotice.stringValue = error.localizedDescription
         }
     }
 
     @objc private func toggleMicrophoneTest() {
         if preview.isRecording { stopMicrophoneTest(); return }
-        guard state.snapshot.canChangeControls, window.isVisible else { return }
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-            testDetail.stringValue = "Allow microphone access in setup before testing."
-            state.perform(.setup)
+        guard state.snapshot.audioControlsAvailable, window.isVisible else { return }
+        guard audio.authorizationStatus() == .authorized else {
+            testDetail.stringValue = "Approve microphone access in the macOS prompt or settings, then return here and click Test microphone."
+            state.perform(.allowMicrophone)
             return
         }
         do {
-            try preview.start(inputUID: DictationPreferences.inputUID)
+            try preview.start(inputUID: DictationPreferences.loadInputUID(from: preferences))
             testButton.title = "Stop test"
             testDetail.stringValue = "Listening to \(preview.activeInputName ?? "your microphone"). Speak to check the meter."
             refreshAudioDevices()
@@ -451,7 +562,26 @@ final class SettingsController: NSObject, NSWindowDelegate, NSTabViewDelegate {
     }
 
     private func refreshExternalState() {
-        refreshMode(); refreshAudioDevices(); refreshLogin()
+        refreshMode(); refreshAudioDevices(); refreshAudioPermission(); refreshLogin()
+    }
+
+    private func refreshAudioPermission() {
+        switch audio.authorizationStatus() {
+        case .authorized:
+            audioPermission.stringValue = "Microphone access is allowed."
+            audioPermission.textColor = .systemGreen
+            permissionButton?.isHidden = true
+        case .notDetermined:
+            audioPermission.stringValue = "Allow microphone access before testing or dictating."
+            audioPermission.textColor = .secondaryLabelColor
+            permissionButton?.title = "Allow microphone"
+            permissionButton?.isHidden = false
+        default:
+            audioPermission.stringValue = "Microphone access is off. Turn on Local Dictation in macOS settings, then return here."
+            audioPermission.textColor = .systemOrange
+            permissionButton?.title = "Open Microphone Settings"
+            permissionButton?.isHidden = false
+        }
     }
 
     private func refreshLogin() {

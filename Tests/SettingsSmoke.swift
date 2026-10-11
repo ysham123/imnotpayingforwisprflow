@@ -26,7 +26,8 @@ import Foundation
             changeShortcut: { events.append(.changeShortcut) }, resetShortcut: { events.append(.resetShortcut) },
             customWords: { events.append(.customWords) }, setup: { events.append(.setup) },
             retryEngines: { events.append(.retryEngines) }, retryListener: { events.append(.retryListener) },
-            exportMetrics: { events.append(.exportMetrics) }, exportPermissions: { events.append(.exportPermissions) })
+            exportMetrics: { events.append(.exportMetrics) }, exportPermissions: { events.append(.exportPermissions) },
+            allowMicrophone: { events.append(.allowMicrophone) })
         var state = SettingsController.State(actions: actions)
         precondition(!state.perform(.changeShortcut))
         precondition(!state.perform(.customWords))
@@ -45,6 +46,20 @@ import Foundation
         precondition(!state.perform(.resetShortcut))
         state.snapshot.canChangeControls = false
         precondition(!state.perform(.changeShortcut) && !state.perform(.retryListener))
+
+        // Loading speech models must not make an unrelated microphone button
+        // inert. Dictation, pending results, and input-capture operations do.
+        for phase: DictationSessionState.Phase in [.loading, .idle, .listening, .processing, .pending, .failedRecording] {
+            precondition(AudioSettingsAvailability.canChange(phase: phase) == (phase == .loading || phase == .idle))
+        }
+        precondition(!AudioSettingsAvailability.canChange(phase: .loading, choosingShortcut: true))
+        precondition(!AudioSettingsAvailability.canChange(phase: .idle, editingWords: true))
+        precondition(!AudioSettingsAvailability.canChange(phase: .idle, copying: true))
+        precondition(!AudioSettingsAvailability.canChange(phase: .idle, terminating: true))
+        state.snapshot.canChangeAudioControls = true
+        precondition(state.perform(.allowMicrophone) && !state.perform(.changeShortcut))
+        state.snapshot.canChangeAudioControls = false
+        precondition(!state.perform(.allowMicrophone))
 
         var osStatus = LoginItemController.Status.disabled
         var registrations = 0, unregistrations = 0, settingsOpens = 0

@@ -1,6 +1,6 @@
 # Development
 
-Local Dictation is a Swift/AppKit menu-bar app for Apple Silicon Macs running macOS 14 or newer. The source package uses Swift tools 5.9 and has no remote Swift package dependencies. The release was built with Swift 5.10.
+Local Dictation is a Swift/AppKit app with a Home window, Dock entry, and microphone menu for Apple Silicon Macs running macOS 14 or newer. The source package uses Swift tools 5.9 and has no remote Swift package dependencies. The release was built with Swift 5.10.
 
 ## Compile the application
 

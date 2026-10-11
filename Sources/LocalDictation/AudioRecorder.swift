@@ -5,10 +5,23 @@ import Foundation
 import DictationCore
 #endif
 
+/// Settings can exercise button dispatch without requesting permission or
+/// opening a real microphone in its UI regression fixture.
+@MainActor
+protocol MicrophonePreview: AnyObject {
+    var isRecording: Bool { get }
+    var activeInputName: String? { get }
+    var inputNotice: String? { get }
+    var onAutomaticStop: (() -> Void)? { get set }
+    var onLevel: ((Float) -> Void)? { get set }
+    func start(inputUID: String?) throws
+    func cancel()
+}
+
 /// Captures microphone audio only while a dictation session is active. Audio is
 /// resampled to mono 16 kHz in memory and is never written to disk.
 @MainActor
-final class AudioRecorder {
+final class AudioRecorder: MicrophonePreview {
     static let sampleRate = Double(RecordingPolicy.sampleRate)
     static let maximumDuration: TimeInterval = RecordingPolicy.maximumDuration
 
