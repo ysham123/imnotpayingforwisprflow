@@ -1,0 +1,33 @@
+{
+  "version": "2.2.0",
+  "build": "15",
+  "packaged_source_commit": "ce0728aab244af823f8831f62071cebced1a8037",
+  "channel": "public-preview",
+  "notarization": {
+    "app": "Accepted",
+    "diskImage": "Accepted",
+    "team_id": "2563R7W8T6",
+    "app_submission_id": "b93ded93-fb0a-4b66-990a-43061068305f",
+    "disk_image_submission_id": "a2ed407a-60a2-402f-87e5-82f25e534033"
+  },
+  "disk_image": {
+    "name": "Local-Dictation.dmg",
+    "sha256": "a43123687e7921670586196ccac9884ef32f31c7c99398094745b575ebbcffac",
+    "bytes": 13630180
+  },
+  "mounted_app_file_count": 77,
+  "mounted_payload_matches_candidate": true,
+  "isolated_copy_matches_candidate": true,
+  "isolated_copy_signature_ticket_and_gatekeeper_pass": true,
+  "real_microphone_interaction_in_updated_installation": "unverified",
+  "fresh_mac_onboarding": "unverified",
+  "designated_requirement_matches_previous_preview": true,
+  "github_packaged_source_checks": {
+    "run_id": 38116638784,
+    "conclusion": "success"
+  },
+  "apple_reported_issues": {
+    "app": [],
+    "dmg": []
+  }
+}

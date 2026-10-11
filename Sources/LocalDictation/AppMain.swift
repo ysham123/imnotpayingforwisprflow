@@ -7,7 +7,7 @@ import Foundation
 struct AppMain {
     static func main() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(.regular)
         let delegate = AppController()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }
@@ -135,7 +135,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && !$0.isTerminated }
         guard let other = others.first else { return true }
         if let url = other.bundleURL {
-            let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = false
+            let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
             NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
         }
         return false
@@ -155,7 +155,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         RunLoop.main.add(timer!, forMode: .common)
         refreshPermissions()
         let cached = (try? RuntimePaths.application()).map(ModelStore.hasCachedFiles) ?? false
-        if !cached || !allPermissions || shortcutFailure != nil || listenerFailure != nil || CommandLine.arguments.contains("--setup") { showSetup() }
+        showHome()
+        if CommandLine.arguments.contains("--setup") { showSetup() }
         // Existing installations continue loading immediately. New downloads
         // start only after the user chooses Start setup (or Resume setup).
         if cached { beginModelSetup() }
@@ -224,10 +225,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag && (!allPermissions || shortcutFailure != nil || listenerFailure != nil ||
-                     (!runtimeInitialized && modelPreparationTask == nil)) { showSetup() }
+        if !flag { showHome() }
         return true
     }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     private var missingPermissions: [String] {
         var missing: [String] = []
@@ -248,10 +250,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configureMenu() {
+        configureApplicationMenu()
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let menu = NSMenu()
         statusMenu = NSMenuItem(title: status, action: nil, keyEquivalent: "")
         menu.addItem(statusMenu); menu.addItem(.separator())
+        let home = NSMenuItem(title: "Open Local Dictation", action: #selector(showHome), keyEquivalent: "")
+        home.target = self; menu.addItem(home)
         let setup = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         setup.target = self; menu.addItem(setup)
         let words = NSMenuItem(title: "Custom Words…", action: #selector(showCustomWords), keyEquivalent: "")
@@ -280,6 +285,33 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.autoenablesItems = false
         item.menu = menu
         updateStatus(status)
+    }
+
+    private func configureApplicationMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem(); let appMenu = NSMenu(title: "Local Dictation")
+        let about = NSMenuItem(title: "About Local Dictation", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        about.target = NSApp; appMenu.addItem(about); appMenu.addItem(.separator())
+        let home = NSMenuItem(title: "Open Local Dictation", action: #selector(showHome), keyEquivalent: "0")
+        home.target = self; appMenu.addItem(home)
+        let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self; appMenu.addItem(settings); appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Local Dictation", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit Local Dictation", action: #selector(quitApp), keyEquivalent: "q")
+        quit.target = self; appMenu.addItem(quit)
+        appItem.submenu = appMenu; main.addItem(appItem)
+        let editItem = NSMenuItem(); let edit = NSMenu(title: "Edit")
+        for (title, selector, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"),
+                                       ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
+            edit.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
+        }
+        editItem.submenu = edit; main.addItem(editItem)
+        let windowItem = NSMenuItem(); let windows = NSMenu(title: "Window")
+        windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windows.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowItem.submenu = windows; main.addItem(windowItem)
+        NSApp.mainMenu = main; NSApp.windowsMenu = windows
     }
 
     private func updateStatus(_ message: String) {
@@ -1083,7 +1115,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if shortcutFailure != nil { updateStatus(permissionStatus) }
     }
 
-    @objc private func showSettings() {
+    private func ensureSettingsController() {
         if settingsController == nil {
             settingsController = SettingsController(actions: .init(
                 changeShortcut: { [weak self] in self?.changeShortcut() },
@@ -1098,9 +1130,18 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     guard let self else { return }
                     if self.phase == .idle { self.updateStatus(self.permissionStatus) }
                     else { self.updateSetupStatus() }
-                }))
+                }, allowMicrophone: { [weak self] in self?.allowMicrophone() }))
         }
-        updateSetupStatus(); settingsController?.show()
+    }
+
+    @objc private func showSettings() {
+        ensureSettingsController()
+        updateSetupStatus(); settingsController?.show(section: "General")
+    }
+
+    @objc private func showHome() {
+        ensureSettingsController()
+        updateSetupStatus(); settingsController?.show(section: "Home")
     }
 
     @objc private func showSetup() {
@@ -1137,7 +1178,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 discardPractice: { [weak self] in if self?.practiceSession != nil { self?.discardPending() } },
                 cancelPractice: { [weak self] in if self?.practiceSession != nil { self?.cancelDictation() } },
                 closed: { [weak self] in self?.syncHotkey() },
-                finished: { [weak self] in self?.syncHotkey() }))
+                finished: { [weak self] in self?.syncHotkey(); self?.showHome() }))
         }
         updateSetupStatus(); setupController?.show(); syncHotkey()
     }
@@ -1159,9 +1200,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateSetupStatus() {
         let canChange = phase == .idle && !recordingShortcut && !editingVocabulary && !copyInProgress && !isTerminating
+        let canChangeAudio = AudioSettingsAvailability.canChange(phase: phase, choosingShortcut: recordingShortcut,
+            editingWords: editingVocabulary, copying: copyInProgress, terminating: isTerminating)
         settingsController?.update(.init(status: status, shortcutDisplay: shortcutConfiguration.displayName,
             usesFn: usesFn, canChangeControls: canChange, readiness: correctionStatus,
-            setupNeeded: !allPermissions || !runtimeInitialized || !monitoring, vocabularyCount: vocabulary.entries.count))
+            setupNeeded: !allPermissions || !runtimeInitialized || !monitoring, vocabularyCount: vocabulary.entries.count,
+            canChangeAudioControls: canChangeAudio, audioRestriction: "\(status)\nFinish this action before changing or testing the microphone."))
         var snapshot = SetupController.Snapshot()
         snapshot.readiness.microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         snapshot.readiness.accessibility = TextInserter.accessibilityGranted()

@@ -5,13 +5,13 @@
 <h1 align="center">I'm not paying for Wispr Flow.</h1>
 <p align="center"><strong>Local voice dictation for your Mac. Free to use. Yours to build on.</strong></p>
 <p align="center">
-  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.1.0"><img alt="Public preview 2.1.0" src="https://img.shields.io/badge/preview-v2.1.0-245be8?style=flat-square" /></a>
+  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.2.0"><img alt="Public preview 2.2.0" src="https://img.shields.io/badge/preview-v2.2.0-245be8?style=flat-square" /></a>
   <img alt="macOS 14 or newer" src="https://img.shields.io/badge/macOS-14%2B-202c28?style=flat-square" />
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple_Silicon-M1_or_newer-202c28?style=flat-square" />
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-202c28?style=flat-square" /></a>
 </p>
 <p align="center">
-  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.1.0/Local-Dictation.dmg"><strong>↓ Download 2.1.0 preview for Mac</strong></a>
+  <a href="https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.2.0/Local-Dictation.dmg"><strong>↓ Download 2.2.0 preview for Mac</strong></a>
   &nbsp;·&nbsp; <a href="#get-started">Get started</a>
   &nbsp;·&nbsp; <a href="#what-runs-under-the-hood">How it works</a>
   &nbsp;·&nbsp; <a href="docs/DEVELOPMENT.md">Build from source</a>
@@ -19,13 +19,13 @@
 
 **Click a text box. Double-tap Fn / Globe. Speak. Tap Fn once to finish.**
 
-**v2.1.0 is a public preview** with Developer ID signing, Apple notarization, a native app icon, and the familiar drag-to-Applications installer. Its new [guided setup](docs/GUIDED-SETUP.md) walks through permissions, local models, a shortcut check, and practice dictation. See the [2.1.0 preview release notes](docs/releases/v2.1.0.md).
+**v2.2.0 is a public preview** with Developer ID signing, Apple notarization, a native app icon, and the familiar drag-to-Applications installer. It opens as a regular Mac app with a Home window and Dock icon. Microphone selection and testing work while models load, and changing devices during a test keeps your choice. [Guided setup](docs/GUIDED-SETUP.md) walks through permissions, local models, a shortcut check, and practice dictation. See the [2.2.0 preview release notes](docs/releases/v2.2.0.md).
 
 Signing, notarization, packaging, and automated macOS checks pass. A complete first-time setup on a Mac that has never used Local Dictation is still unverified. The latest stable release remains [v2.0.1](https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.0.1); its download uses the earlier ad-hoc installation flow. Editor compatibility limits are recorded in [VALIDATION.md](docs/VALIDATION.md).
 
 Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Shortcuts → Change shortcut…**.
 
-Local Dictation is a native menu-bar app that turns speech into text. Choose **Clean** to remove fillers and accidental repetition and resolve clear spoken corrections, or **Verbatim** to use the speech recognizer’s transcript directly. Speech recognition and cleanup run on your Mac. The app downloads its models on first use and reuses them through updates.
+Local Dictation is a native Mac app that turns speech into text. Choose **Clean** to remove fillers and accidental repetition and resolve clear spoken corrections, or **Verbatim** to use the speech recognizer’s transcript directly. Speech recognition and cleanup run on your Mac. The app downloads its models on first use and reuses them through updates.
 
 No subscription, API key, account, or separate Ollama installation is required. No recordings or transcript history are saved.
 
@@ -40,7 +40,7 @@ That example passes the local model checks. Ambiguous speech, names, and numbers
 
 ### 1. Install
 
-[**Download the 2.1.0 preview DMG**](https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.1.0/Local-Dictation.dmg), open it, and drag **Local Dictation** onto the **Applications** folder beside it. Eject the disk image, then open Local Dictation from Applications. No Terminal or developer tools are needed.
+[**Download the 2.2.0 preview DMG**](https://github.com/ysham123/imnotpayingforwisprflow/releases/download/v2.2.0/Local-Dictation.dmg), open it, and drag **Local Dictation** onto the **Applications** folder beside it. Eject the disk image, then open Local Dictation from Applications. No Terminal or developer tools are needed.
 
 For an update, finish any dictation and quit the old app first. Choose **Replace** if Finder asks. Models already stored in Application Support and saved preferences are reused.
 
@@ -76,7 +76,7 @@ The transition from an ad-hoc or creator self-signed build to Developer ID may r
 
 ### 2. Grant three permissions
 
-The installed app opens its **setup window** when setup is needed. Choose **Start setup** and follow the permission walkthrough. You can reopen setup through **Settings… → Advanced → Review setup…**. Ordinary settings stay open when you switch apps.
+The app opens its **Home window**, with setup, microphone, and shortcut controls you can click through. Choose **Start or resume setup** and follow the permission walkthrough. Open Local Dictation from your Dock or Applications to return to Home; **Settings…** opens General preferences. Ordinary settings stay open when you switch apps.
 
 | Permission | Why it is needed |
 |---|---|
@@ -86,7 +86,7 @@ The installed app opens its **setup window** when setup is needed. Choose **Star
 
 Enable **Local Dictation itself** in each permission list. If macOS asks you to quit and reopen it, do so.
 
-Complete the shortcut check and practice dictation inside setup. The permission status updates live. Once ready, the app stays in the menu bar. Closing setup or Settings leaves dictation running. There is no Screen Recording permission requirement.
+Complete the shortcut check and practice dictation inside setup. The permission status updates live. Once ready, use the Dock icon, app window, or microphone menu to find controls. Closing the app window leaves dictation running; choose **Quit Local Dictation** to stop it. There is no Screen Recording permission requirement.
 
 ### 3. Choose your dictation shortcut
 
@@ -117,7 +117,7 @@ Record for up to **five minutes**. The indicator gives a final 15-second countdo
 
 Choose **Settings… → General → Dictation mode** for Clean or Verbatim. Verbatim skips Qwen cleanup; Whisper can still add punctuation or normalize spoken words. During cleanup, **Use original** delivers the recognized transcript immediately. Mode, microphone selection, and custom words are fixed for each recording when it starts.
 
-Choose your microphone in **Settings… → Audio** and use **Test microphone** to check its level. The test stops when you switch apps, close Settings, leave Audio, or start dictation. If a saved microphone is unavailable, the app uses the system default and shows a notice.
+Choose your microphone in **Microphone** and use **Test microphone** to check its level. The test stops when you switch apps, close Settings, leave Microphone, or start dictation. If a saved microphone is unavailable, the app uses the system default and shows a notice.
 
 If speech recognition fails, **Retry** uses the same recording without asking you to speak again. One failed recording stays in memory until recognition succeeds, you choose **Discard**, or you quit. New recording is blocked while it waits. A successful retry holds text for you to place explicitly.
 
@@ -167,7 +167,7 @@ flowchart LR
 
 | Component | Job |
 |---|---|
-| **Swift + AppKit** | Native installer, menu-bar app, floating indicator, Settings, and placement recovery |
+| **Swift + AppKit** | Native installer, app window and Dock entry, floating indicator, Settings, and placement recovery |
 | **AVFoundation** | Capture microphone audio and convert it to 16 kHz mono in memory |
 | **whisper.cpp 1.8.3** | Run speech recognition locally with Metal acceleration |
 | **Whisper large-v3-turbo, Q8_0** | English speech-to-text model, about 874 MB; receives bounded custom-word hints |
@@ -189,7 +189,7 @@ Cleanup is conservative. Validation rejects reordered content, reassigned number
 - **Local permission diagnostics.** A bounded readiness log contains app path/signature metadata and permission/listener states. It excludes recorded audio, transcripts, typed keys, target-app names, and custom words. Export it explicitly if you need help; the installation path can contain your macOS username.
 - **Your destination still matters.** Once text is inserted into another app, that app's own storage and privacy behavior applies.
 
-**Settings…** has General, Audio, Shortcuts, Custom Words, and Advanced sections. **Open at login** is optional and off by default; Settings reports macOS’s actual login-item status.
+The app window has Home, Microphone, General, Shortcuts, Custom Words, and Advanced sections. Microphone selection and testing remain available while local models load. Tests pause during dictation, pending-result recovery, or other input capture. **Open at login** is optional and off by default; Settings reports macOS’s actual login-item status.
 
 The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting text**, **Retry local engines**, **Retry shortcut listener**, and explicit diagnostic exports. Copy last result intentionally replaces the clipboard.
 
@@ -210,7 +210,7 @@ The menu includes **Cancel dictation**, **Copy last result**, **Discard waiting 
 | “Paste sent” | Check the field before pasting again. The app could not confirm the result and does not retry automatically. |
 | Correction is unavailable | The current dictation uses the original transcript while cleanup recovers in the background. Verbatim mode does not require cleanup. |
 | Recording saved | Choose **Retry** to transcribe the retained audio, or **Discard** to release it and record again. |
-| Microphone changed or recording stopped | Captured speech is processed when possible; the status explains the interruption. Select an available input in Settings → Audio for the next recording. |
+| Microphone changed or recording stopped | Captured speech is processed when possible; the status explains the interruption. Select an available input in Microphone for the next recording. |
 | Model download is interrupted | Reopen Settings and choose **Resume model setup**. Verified files are reused and partial downloads can resume. |
 | Another copy is already running | Quit the existing copy before updating. For normal use, open the installed app in Applications. |
 | A custom word is not used | Check its preferred spelling and saved alias. Recognition hints have limited space; **Cleanup only** applies after a matching alias is recognized. |

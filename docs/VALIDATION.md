@@ -1,6 +1,16 @@
 # Release validation
 
-This records the v2.1.0 public preview, the v2.0.1 stable package, earlier candidate checks, and historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+This records the v2.2.0 and v2.1.0 public previews, the v2.0.1 stable package, earlier candidate checks, and historical v1.3/v1.2/v1.1 evidence. It is not a promise of compatibility with every macOS text editor.
+
+## 2.2.0 app window and microphone preview, 2026-10-11
+
+Version **2.2.0 build 15** was packaged from `ce0728a` with the unchanged speech worker, correction runtime, and model manifest. GitHub's full macOS workflow passed for that source. The app now has a normal Home window, Dock entry, native sidebar, and application menus. Microphone selection/testing has separate availability during model loading, direct permission actions, and a regression fix for losing a newly selected input during a test.
+
+- Native fixture renders cover all six sections at normal and minimum sizes. Actual NSControl target/action dispatch checks Home/sidebar navigation, preview cancellation, a device change during a test, saving and using the new UID, permission recovery, model-loading availability, and busy-state exclusion. The fixture injects fake audio and isolated preferences; it does not capture physical microphone audio or grant permissions.
+- The app and both helpers pass Developer ID, secure timestamp, hardened runtime, and team checks. The main app retains only the microphone entitlement. Apple accepted the app and DMG, with no reported issues; both have valid stapled tickets and pass Gatekeeper.
+- The final mounted app and a real copy into a temporary Applications folder match all candidate files. The copy passes strict signature, ticket, and Gatekeeper checks. The creator's installed 2.1.0 build 12 was preserved during these checks.
+
+See [numeric release verification](benchmarks/v2.2.0/release-verification.json) and [release notes](releases/v2.2.0.md). Real microphone interaction in the updated installed app, privacy-grant continuity across this Developer ID update, and complete fresh-Mac onboarding remain unverified. This is a public preview; 2.0.1 stays latest stable.
 
 ## 2.1.0 public preview, 2026-10-11
 

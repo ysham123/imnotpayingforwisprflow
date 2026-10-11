@@ -205,7 +205,7 @@ def main():
                    if args.notarized_app else
                    'This community app is not notarized by Apple. If macOS blocks it,\nreview System Settings > Privacy & Security > Open Anyway.\n')
         readme = ('LOCAL DICTATION ' + version + '\n\nDrag Local Dictation onto the Applications folder beside it.\nEject the disk image, then open Local Dictation from Applications.\nQuit the old app before replacing it when updating.\n'
-                  'Choose Start setup and follow the permission, model, shortcut, and practice steps.\n'
+                  'In Home, choose Start or resume setup and follow the permission, model, shortcut, and practice steps.\n'
                   'Models download and verify about 3.4 GB into Application Support.\n'
                   'Existing verified models are reused.\n' + opening +
                   'Installation does not change Gatekeeper, certificate trust, or permissions.\n')
