@@ -48,7 +48,7 @@ core_frameworks = phase('CoreFrameworks', 'PBXFrameworksBuildPhase', [])
 embed = phase('EmbedFrameworks', 'PBXCopyFilesBuildPhase', [build('embedcore', core_product, settings={'ATTRIBUTES': ['CodeSignOnCopy', 'RemoveHeadersOnCopy']})], dstPath='', dstSubfolderSpec='10', name='Embed Frameworks')
 runtime = phase('EmbedRuntime', 'PBXShellScriptBuildPhase', [], name='Embed sandboxed speech helpers',
     shellPath='/bin/sh', alwaysOutOfDate='1', inputPaths=[], outputPaths=[],
-    shellScript='python3 "${SRCROOT}/../Scripts/embed-store-runtime.py" --runtime "${LOCAL_DICTATION_STORE_RUNTIME_DIR}" --destination "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers" --identity "${EXPANDED_CODE_SIGN_IDENTITY:--}"\n')
+    shellScript='python3 "${SRCROOT}/../Scripts/embed-store-runtime.py" --runtime "${LOCAL_DICTATION_STORE_RUNTIME_DIR}" --destination "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers" --identity "${EXPANDED_CODE_SIGN_IDENTITY:--}" --configuration "${CONFIGURATION}" --symbols "${DWARF_DSYM_FOLDER_PATH}"\n')
 common = {'MACOSX_DEPLOYMENT_TARGET': '14.0', 'SDKROOT': 'macosx', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
           'SWIFT_VERSION': '5.0', 'CLANG_ENABLE_MODULES': 'YES', 'DEVELOPMENT_TEAM': '2563R7W8T6',
           'CODE_SIGN_STYLE': 'Automatic', 'ENABLE_HARDENED_RUNTIME': 'YES', 'ENABLE_DEBUG_DYLIB': 'NO', 'DEBUG_INFORMATION_FORMAT': 'dwarf-with-dsym'}
@@ -67,14 +67,14 @@ def configurations(label, settings):
         configs.append(obj(label + configuration, 'XCBuildConfiguration', name=configuration, buildSettings=values))
     return obj(label + 'Configs', 'XCConfigurationList', buildConfigurations=configs, defaultConfigurationIsVisible='0', defaultConfigurationName='Release')
 core_configs = configurations('Core', {'PRODUCT_NAME': 'DictationCore', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.yosef.localdictation.core',
-    'DEFINES_MODULE': 'YES', 'GENERATE_INFOPLIST_FILE': 'YES', 'SKIP_INSTALL': 'YES', 'CURRENT_PROJECT_VERSION': '17',
+    'DEFINES_MODULE': 'YES', 'GENERATE_INFOPLIST_FILE': 'YES', 'SKIP_INSTALL': 'YES', 'CURRENT_PROJECT_VERSION': '18',
     'MARKETING_VERSION': '2.3.0', 'DYLIB_INSTALL_NAME_BASE': '@rpath', 'INSTALL_PATH': '$(LOCAL_LIBRARY_DIR)/Frameworks'})
 app_configs = configurations('App', {'PRODUCT_NAME': 'Local Dictation', 'INFOPLIST_FILE': 'Info.plist',
     'CODE_SIGN_ENTITLEMENTS': 'AppStore.entitlements', 'ENABLE_APP_SANDBOX': 'YES', 'ENABLE_USER_SCRIPT_SANDBOXING': 'NO',
-    'CURRENT_PROJECT_VERSION': '17', 'MARKETING_VERSION': '2.3.0', 'SKIP_INSTALL': 'NO',
+    'CURRENT_PROJECT_VERSION': '18', 'MARKETING_VERSION': '2.3.0', 'SKIP_INSTALL': 'NO',
     'ASSETCATALOG_COMPILER_APPICON_NAME': 'AppIcon',
     'LD_RUNPATH_SEARCH_PATHS': '$(inherited) @executable_path/../Frameworks',
-    'LOCAL_DICTATION_STORE_RUNTIME_DIR': '$(SRCROOT)/../.build-native/store-runtime'})
+    'LOCAL_DICTATION_STORE_RUNTIME_DIR': '$(SRCROOT)/../.build-native/store-runtime-candidate'})
 core_target = obj('CoreTarget', 'PBXNativeTarget', name='DictationCore', productName='DictationCore',
     productType='com.apple.product-type.framework', productReference=core_product, buildConfigurationList=core_configs,
     buildPhases=[core_sources, core_frameworks, core_resources], buildRules=[], dependencies=[])

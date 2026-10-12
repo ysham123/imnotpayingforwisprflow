@@ -14,7 +14,8 @@ The owner chose to keep insertion into other apps and approved macOS Services as
 | Bundle identifier | dev.yosef.localdictation |
 | Team | 2563R7W8T6 |
 | SKU | local-dictation-macos |
-| Internal test version / build | 2.3.0 / 17 |
+| Uploaded internal test version / build | 2.3.0 / 17; not yet visible in TestFlight |
+| Current signed candidate / build | 2.3.0 / 18; exported locally, not uploaded |
 | Development bundle identifier | dev.yosef.localdictation.store.development |
 
 [App Store Connect draft](https://appstoreconnect.apple.com/apps/6821808111/distribution) is **Prepare for Submission**. Creating this record does not upload a build or publish the app.
@@ -23,7 +24,13 @@ The owner chose to keep insertion into other apps and approved macOS Services as
 
 Open `LocalDictationStore.xcodeproj` in Xcode 27 or newer and select the LocalDictationStore scheme. The project has explicit source membership: the installer, Fn event tap, Accessibility inspector, and keyboard-event text inserter are excluded. Shared speech, audio-input, model verification, vocabulary, and cleanup code remain in use.
 
-Provide rebuilt, audited `whisper-worker` and `ollama` executables in `.build-native/store-runtime/`, or set the Xcode build setting `LOCAL_DICTATION_STORE_RUNTIME_DIR` to their directory. Do not place model weights there. The normal [source build](../docs/DEVELOPMENT.md) describes the speech-worker build and pinned Ollama runtime. For this local feasibility run, the two runtimes came from the already verified 2.2.1 app; rebuilding release dependencies from the documented versions is still required before distribution.
+Build the pinned `whisper-worker` and Ollama helpers with their actual debug symbols. The script checks every downloaded source archive against [RuntimeSources.json](RuntimeSources.json), uses a private Go toolchain without installing it globally, and records source hashes, compiler versions, binary hashes, and UUIDs. CMake and Xcode are required. Models are not included.
+
+```sh
+python3 Scripts/build-store-runtime.py
+```
+
+The output is `.build-native/store-runtime-candidate/`. Choose an empty alternate directory with `--output` to preserve an earlier runtime, then set `LOCAL_DICTATION_STORE_RUNTIME_DIR` to that directory. The Release build refuses missing or mismatched provenance and helper symbols. The original build 17 reused the verified website runtimes; build 18 uses these source rebuilds. [Runtime verification notes](RUNTIME-VERIFICATION.md) record the checks and remaining audit limits.
 
 ```sh
 bash Scripts/build-store-preview.sh
@@ -33,7 +40,13 @@ python3 Scripts/check-store-build.py \
 
 The preview script makes an ad-hoc signed, sandboxed **development** app. It is not suitable for upload. It uses a separate app identifier, preferences, and sandbox container. Full model testing requires verified weights in that container; first-run downloads require consent through Download models.
 
-For distribution, use the registered team and **Product → Archive → Distribute App → App Store Connect**. Xcode archives with Apple Development, then re-signs during Store export with the managed distribution identity and profile. Release archives use the production identifier and hardened runtime. Run the checker without `--development` on the signed exported app. Its result supplements Xcode validation; it does not prove App Review acceptance or complete live readiness.
+Prepare the archive with matching helper symbols:
+
+```sh
+bash Scripts/archive-store.sh
+```
+
+The script archives with managed Apple Development signing, copies both helper dSYMs into the archive, and verifies their UUIDs and real source debug information. It does not upload. Use a new archive path as its optional first argument when preserving a previous candidate. Xcode re-signs during Store export with the managed distribution identity and profile. Release archives use the production identifier and hardened runtime. Run `check-store-build.py` without `--development` on the signed exported app. Its result supplements Xcode validation; it does not prove App Review acceptance or complete live readiness.
 
 The reproducible project generator is `Scripts/generate-store-project.py`. It uses Python's standard library and regenerates the checked-in project, scheme, plists, and entitlements. Update that generator when changing generated project configuration.
 
@@ -58,6 +71,10 @@ The reproducible project generator is `Scripts/generate-store-project.py`. It us
 | Store package export | Passed; app uses Apple Distribution and package uses the Apple-issued Mac installer identity |
 | Distribution preflight | Passed signature, team/profile identity, sandbox, helper inheritance/team, and API checks |
 | App Store Connect upload | Xcode reported success for internal-only 2.3.0 (17); processing/availability must be verified in Connect |
+| Current Connect status | After renewed sign-in on October 12, TestFlight still showed No Builds; Apple processing feedback is needed |
+| Source-rebuilt helpers | Build 18 uses verified Whisper 1.8.3 / Ollama 0.9.6 / Go 1.24.5 sources, with matching real helper dSYMs |
+| Build 18 archive / export | Passed managed signing, helper-symbol validation, Store export, and distribution preflight; not uploaded |
+| Store download transport | Seven live HTTPS checks passed: before/during-transfer cancellation, verified retry, offline reuse, wrong digest, HTTP rejection, oversized response |
 | Sandbox enforcement | Existing outside synthetic marker could not be read |
 | Development bundle preflight | Passed; not a distribution identity/profile check |
 | Services fixture | Passed cross-process return and insertion at an owned AppKit caret |
@@ -69,22 +86,22 @@ The reproducible project generator is `Scripts/generate-store-project.py`. It us
 | Services setup link | Opened Keyboard Shortcuts directly on Services; registered dictation service was enabled |
 | Existing shared regressions | Model setup/install groups, 5 speech worker faults, 6 correction lifecycle checks, 12 cleanup coordinator groups passed |
 
-The test artifacts are under `.test-build/` and are not committed. Model clones used in testing are not evidence of fresh first-run download setup. The initial cold cleanup attempt timed out; subsequent real-model checks passed. Setup now retries recoverable warmup failures within a bounded budget and otherwise retains the original transcript.
+The test artifacts are under `.test-build/` and are not committed. Model clones used in testing are not evidence of fresh first-run download setup. The initial cold cleanup attempt with the rebuilt helper exceeded the 20-second first warmup budget; a subsequent real-model run passed speech and cleanup. Setup retries recoverable warmup failures within a bounded budget and otherwise retains the original transcript. The download transport checks use an 8 MB public source archive as data, not model weights; they do not prove full first-run setup or sandbox behavior. The earlier tiny HTTPS fixture ran inside the sandbox.
 
 The window includes the existing app logo, microphone selection, refresh, a five-second microphone test independent of model loading, and a Clean/Original selector. The microphone test requests access only when clicked, displays the level meter, and discards its audio. Its physical-microphone acceptance remains pending.
 
-The Store description, keywords, support/marketing URLs, version, copyright, and reviewer notes are saved in App Store Connect. The public [privacy policy](https://local-dictation-psi.vercel.app/privacy.html) is deployed; the website's app download remains 2.2.1.
+The Store description, keywords, support/marketing URLs, version, copyright, reviewer notes, and the three sandbox entitlement explanations are saved in App Store Connect. The public [privacy policy](https://local-dictation-psi.vercel.app/privacy.html) is deployed; the website's app download remains 2.2.1.
 
 ## Remaining release gates
 
 - Xcode initially reported expired authentication, then refreshed its existing session. The signing team became available, a managed development identity was created, and automatic Store export succeeded. Store distribution signing uses Xcode's managed signing; private keys were not exported or placed in the repository.
-- Verify that internal-only build 17 finishes App Store Connect processing and becomes available for owner testing. Upload success does not prove processing, TestFlight availability, or App Review approval.
-- Xcode reported missing dSYMs for the reused whisper-worker and Ollama runtimes. Upload succeeded, but helper crash symbolication is limited. Rebuild release dependencies with matching debug symbols before the public candidate; do not substitute empty symbol files.
+- Resolve why the successfully uploaded internal-only build 17 is not visible in TestFlight. Check Apple's processing email. Upload success does not prove processing, TestFlight availability, or App Review approval. Build 18 is exported locally but not uploaded while the earlier processing outcome remains unknown.
+- Build 18 resolves the missing helper symbols from build 17. Verify the next upload's symbol processing and TestFlight availability; matching local dSYMs do not prove Apple's processing result.
 - Test a real microphone session and cancellation through Services, including permission denial/recovery and long dictation. Test Chrome, Safari, TextEdit, and common coding editors separately. Universal editor support is not claimed.
 - Verify fresh-container full-model downloads, pause/retry, low disk space, offline reuse, sleep/wake, and memory pressure. The Store downloader restarts an interrupted file rather than resuming it byte-for-byte.
 - Check target behavior if focus or the caret changes during a pending Services request. The OS requestor route differs from the website edition's destination restoration.
 - Complete screenshots of the actual Store edition, App Privacy answers, age rating, export compliance, pricing/availability, reviewer contact information, and any applicable EU trader declaration. Account or legal declarations must come from the owner.
-- Finish the bundled third-party privacy/API audit and dependency rebuild; app manifests declare own-container file metadata, elapsed-time timers, low-space checks, and app-only preferences.
+- Finish the bundled third-party privacy/API and security review. Source rebuilding and exact-version license coverage are verified; binary symbol inspection does not prove every runtime call path. App manifests declare own-container file metadata, elapsed-time timers, low-space checks, and app-only preferences.
 - Submit for Apple review and verify approval before advertising an App Store download.
 
 Apple references: [Sandbox](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox), [Review guidelines](https://developer.apple.com/app-store/review/guidelines/), [Providing Services](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/SysServices/Articles/providing.html), [Using Services](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/SysServices/Articles/using.html), [Inherited helpers](https://developer.apple.com/documentation/xcode/embedding-a-helper-tool-in-a-sandboxed-app), [Privacy API reasons](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitypereasons).
