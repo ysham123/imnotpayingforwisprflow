@@ -14,7 +14,7 @@ The owner chose to keep insertion into other apps and approved macOS Services as
 | Bundle identifier | dev.yosef.localdictation |
 | Team | 2563R7W8T6 |
 | SKU | local-dictation-macos |
-| Candidate version / build | 2.3.0 / 17 |
+| Internal test version / build | 2.3.0 / 17 |
 | Development bundle identifier | dev.yosef.localdictation.store.development |
 
 [App Store Connect draft](https://appstoreconnect.apple.com/apps/6821808111/distribution) is **Prepare for Submission**. Creating this record does not upload a build or publish the app.
@@ -33,9 +33,11 @@ python3 Scripts/check-store-build.py \
 
 The preview script makes an ad-hoc signed, sandboxed **development** app. It is not suitable for upload. It uses a separate app identifier, preferences, and sandbox container. Full model testing requires verified weights in that container; first-run downloads require consent through Download models.
 
-For distribution, refresh the Apple account in Xcode, use the registered team, create or select a valid Mac App Store distribution identity and profile, then **Product → Archive → Distribute App → App Store Connect**. Release archives use the production identifier and hardened runtime. Run the checker without `--development` on the signed exported app. Its result supplements Xcode validation; it does not prove App Review acceptance or complete live readiness.
+For distribution, use the registered team and **Product → Archive → Distribute App → App Store Connect**. Xcode archives with Apple Development, then re-signs during Store export with the managed distribution identity and profile. Release archives use the production identifier and hardened runtime. Run the checker without `--development` on the signed exported app. Its result supplements Xcode validation; it does not prove App Review acceptance or complete live readiness.
 
 The reproducible project generator is `Scripts/generate-store-project.py`. It uses Python's standard library and regenerates the checked-in project, scheme, plists, and entitlements. Update that generator when changing generated project configuration.
+
+`ExportOptions.plist` prepares a normal Store export. `InternalTestingExportOptions.plist` uploads a development-branch build for **internal TestFlight only**, following Xcode's recommendation for development branches. Such a build cannot be used for external testing or App Store release; a later validated public candidate needs a higher build number and the normal export options.
 
 ## Sandbox implementation
 
@@ -52,7 +54,10 @@ The reproducible project generator is `Scripts/generate-store-project.py`. It us
 |---|---|
 | Xcode | 27.0, 27A266a; first-launch setup complete |
 | Debug Xcode build | Passed |
-| Release Xcode archive | Passed without distribution signing; upload remains blocked |
+| Release Xcode archive | Passed with managed Apple Development signing |
+| Store package export | Passed; app uses Apple Distribution and package uses the Apple-issued Mac installer identity |
+| Distribution preflight | Passed signature, team/profile identity, sandbox, helper inheritance/team, and API checks |
+| App Store Connect upload | Xcode reported success for internal-only 2.3.0 (17); processing/availability must be verified in Connect |
 | Sandbox enforcement | Existing outside synthetic marker could not be read |
 | Development bundle preflight | Passed; not a distribution identity/profile check |
 | Services fixture | Passed cross-process return and insertion at an owned AppKit caret |
@@ -72,8 +77,9 @@ The Store description, keywords, support/marketing URLs, version, copyright, and
 
 ## Remaining release gates
 
-- Xcode's Apple-account authentication has expired. The owner must sign in again before automatic signing and upload can proceed. No usable distribution identity is in the active code-signing keychain search list.
-- Generate or select the correct Store signing identity/profile, validate the signed archive, upload, and verify that App Store Connect processes it.
+- Xcode initially reported expired authentication, then refreshed its existing session. The signing team became available, a managed development identity was created, and automatic Store export succeeded. Store distribution signing uses Xcode's managed signing; private keys were not exported or placed in the repository.
+- Verify that internal-only build 17 finishes App Store Connect processing and becomes available for owner testing. Upload success does not prove processing, TestFlight availability, or App Review approval.
+- Xcode reported missing dSYMs for the reused whisper-worker and Ollama runtimes. Upload succeeded, but helper crash symbolication is limited. Rebuild release dependencies with matching debug symbols before the public candidate; do not substitute empty symbol files.
 - Test a real microphone session and cancellation through Services, including permission denial/recovery and long dictation. Test Chrome, Safari, TextEdit, and common coding editors separately. Universal editor support is not claimed.
 - Verify fresh-container full-model downloads, pause/retry, low disk space, offline reuse, sleep/wake, and memory pressure. The Store downloader restarts an interrupted file rather than resuming it byte-for-byte.
 - Check target behavior if focus or the caret changes during a pending Services request. The OS requestor route differs from the website edition's destination restoration.

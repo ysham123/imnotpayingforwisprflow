@@ -197,7 +197,7 @@ final class StoreAppController: NSObject, NSApplicationDelegate, NSWindowDelegat
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 740),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Local Dictation"
-        window.isReleasedWhenClosed = false; window.delegate = self; window.center()
+        window.isReleasedWhenClosed = false; window.isRestorable = false; window.delegate = self; window.center()
         window.contentMinSize = NSSize(width: 660, height: 740)
         let title = NSTextField(labelWithString: "Your voice. On your Mac.")
         title.font = .systemFont(ofSize: 26, weight: .bold)

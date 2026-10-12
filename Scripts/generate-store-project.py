@@ -60,7 +60,9 @@ def configurations(label, settings):
         values['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'APP_STORE DEBUG' if configuration == 'Debug' else 'APP_STORE'
         if label == 'App':
             values['PRODUCT_BUNDLE_IDENTIFIER'] = 'dev.yosef.localdictation.store.development' if configuration == 'Debug' else 'dev.yosef.localdictation'
-            values['CODE_SIGN_IDENTITY'] = 'Apple Development' if configuration == 'Debug' else 'Apple Distribution'
+            # Xcode archives with its managed development identity, then
+            # re-signs for the Store during app-store-connect export.
+            values['CODE_SIGN_IDENTITY'] = 'Apple Development'
             values['LOCAL_DICTATION_DISPLAY_NAME'] = 'Local Dictation Store Preview' if configuration == 'Debug' else 'Local Dictation'
         configs.append(obj(label + configuration, 'XCBuildConfiguration', name=configuration, buildSettings=values))
     return obj(label + 'Configs', 'XCConfigurationList', buildConfigurations=configs, defaultConfigurationIsVisible='0', defaultConfigurationName='Release')
@@ -108,7 +110,7 @@ info = {'CFBundleExecutable': '$(EXECUTABLE_NAME)', 'CFBundleIdentifier': '$(PRO
     'CFBundleName': '$(PRODUCT_NAME)', 'CFBundleDisplayName': '$(LOCAL_DICTATION_DISPLAY_NAME)', 'CFBundlePackageType': 'APPL',
     'CFBundleShortVersionString': '$(MARKETING_VERSION)', 'CFBundleVersion': '$(CURRENT_PROJECT_VERSION)',
     'CFBundleIconFile': 'AppIcon', 'LSMinimumSystemVersion': '$(MACOSX_DEPLOYMENT_TARGET)', 'LSApplicationCategoryType': 'public.app-category.productivity',
-    'NSMicrophoneUsageDescription': 'Local Dictation records your voice only when you start dictation and transcribes it on this Mac.',
+    'NSMicrophoneUsageDescription': 'Local Dictation uses your microphone only when you start dictation or a microphone test. Speech is processed on this Mac.',
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True}, 'LSMultipleInstancesProhibited': True,
     'NSHumanReadableCopyright': 'Copyright © 2026 Yosef Shammout',
     'NSServices': [{'NSMenuItem': {'default': 'Dictate with Local Dictation'}, 'NSMessage': 'dictateText',
