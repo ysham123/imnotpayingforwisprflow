@@ -66,6 +66,7 @@ The reproducible project generator is `Scripts/generate-store-project.py`. It us
 | Check | Result / limit |
 |---|---|
 | Xcode | 27.0, 27A266a; first-launch setup complete |
+| GitHub checks for documentation commit 87cad6e | Regression workflow and GitGuardian passed; docs-only update |
 | Debug Xcode build | Passed |
 | Release Xcode archive | Passed with managed Apple Development signing |
 | Store package export | Passed; app uses Apple Distribution and package uses the Apple-issued Mac installer identity |
