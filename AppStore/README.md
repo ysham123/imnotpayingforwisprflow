@@ -14,7 +14,7 @@ The owner chose to keep insertion into other apps and approved macOS Services as
 | Bundle identifier | dev.yosef.localdictation |
 | Team | 2563R7W8T6 |
 | SKU | local-dictation-macos |
-| Uploaded builds | 2.3.0 / 17 (rejected) and 2.3.0 / 18 (listed in TestFlight; Missing Compliance) |
+| Uploaded builds | 2.3.0 / 17 (rejected) and 2.3.0 / 18 (listed in TestFlight; Ready to Submit) |
 | Current signed build | 2.3.0 / 18 |
 | Development bundle identifier | dev.yosef.localdictation.store.development |
 
@@ -71,7 +71,7 @@ The reproducible project generator is `Scripts/generate-store-project.py`. It us
 | Store package export | Passed; app uses Apple Distribution and package uses the Apple-issued Mac installer identity |
 | Distribution preflight | Passed signature, team/profile identity, sandbox, helper inheritance/team, and API checks |
 | App Store Connect uploads | Build 17 was rejected with Apple error 91109 for a `com.apple.quarantine` attribute in `whisper-worker`; build 18 is listed as Complete in App Store Connect Build Uploads |
-| Current Connect status | Build 18 is visible in TestFlight as Build 18, but remains Missing Compliance. The standard-encryption declaration and France availability route to a required French encryption declaration upload. The version page has no attached build yet |
+| Current Connect status | Build 18 is visible in TestFlight as Build 18 and is Ready to Submit. Standard encryption is declared, France distribution is set to No, and France is marked Not Available in the territory list. Build 18 is attached to the version 2.3.0 draft; App Store Connect still disables Add for Review because required listing items are incomplete |
 | Source-rebuilt helpers | Build 18 uses verified Whisper 1.8.3 / Ollama 0.9.6 / Go 1.24.5 sources, with matching real helper dSYMs |
 | Build 18 archive / export / upload | Passed managed signing, helper-symbol validation, Store export, and distribution preflight; Xcode accepted upload without the missing-helper-symbol warnings seen on build 17 |
 | Store download transport | Seven live HTTPS checks passed: before/during-transfer cancellation, verified retry, offline reuse, wrong digest, HTTP rejection, oversized response |
@@ -90,17 +90,17 @@ The test artifacts are under `.test-build/` and are not committed. Model clones 
 
 The window includes the existing app logo, microphone selection, refresh, a five-second microphone test independent of model loading, and a Clean/Original selector. The microphone test requests access only when clicked, displays the level meter, and discards its audio. Its physical-microphone acceptance remains pending.
 
-The Store description, keywords, support/marketing URLs, version, copyright, reviewer notes, and the three sandbox entitlement explanations are saved in App Store Connect. Apple calculated and saved 4+ with regional equivalents. The price schedule is free ($0.00 USD base), and 175 countries or regions are configured as Available on App Release. The App Privacy answer “Data Not Collected” was published October 12, 2026. These settings do not publish the app or resolve remaining regional compliance obligations. The public [privacy policy](https://local-dictation-psi.vercel.app/privacy.html) is deployed; the website's app download remains 2.2.1.
+The Store description, keywords, support/marketing URLs, version, copyright, reviewer notes, and the three sandbox entitlement explanations are saved in App Store Connect. Apple calculated and saved 4+ with regional equivalents. The price schedule is free ($0.00 USD base), 174 countries or regions are configured as Available on App Release, with France marked Not Available. Apple confirmed the territory change may take up to 24 hours to take effect. The App Privacy answer “Data Not Collected” was published October 12, 2026. These settings do not publish the app. The public [privacy policy](https://local-dictation-psi.vercel.app/privacy.html) is deployed; the website's app download remains 2.2.1.
 
 ## Remaining release gates
 
 - Xcode initially reported expired authentication, then refreshed its existing session. The signing team became available, a managed development identity was created, and Store export succeeded. Store distribution signing uses Xcode's managed signing; private keys were not exported or placed in the repository.
-- Build 17 failed with Apple error 91109: `whisper-worker` contained a `com.apple.quarantine` extended attribute, which Apple disallows in TestFlight/App Store packages. For build 18, the owner confirmed standard encryption and France distribution. Apple requires a French encryption declaration document before it can clear compliance; no document has been supplied or approved. ANSSI routes filings through its [French cryptology declaration procedure](https://demarche.numerique.gouv.fr/commencer/declaration-relative-a-un-moyen-de-cryptologie), whose listed attachments include a general organization document, commercial and technical product brochures, and a company registration extract or equivalent where applicable. Apple issues a compliance code after approving required documentation; add that code to the app's Info.plist and upload a new build before expecting a clean TestFlight compliance state.
+- Build 17 failed with Apple error 91109: `whisper-worker` contained a `com.apple.quarantine` extended attribute, which Apple disallows in TestFlight/App Store packages. Build 18 cleared Missing Compliance after the standard-encryption declaration was saved with France distribution set to No. France is excluded from the selected territories. Revisit export-compliance answers if the app's encryption implementation or distribution territories change.
 - Verify that Apple's processing attaches both helper symbol files for build 18; matching local dSYMs and the Complete upload status do not prove symbol availability.
 - Test a real microphone session and cancellation through Services, including permission denial/recovery and long dictation. Test Chrome, Safari, TextEdit, and common coding editors separately. Universal editor support is not claimed.
 - Verify fresh-container full-model downloads, pause/retry, low disk space, offline reuse, sleep/wake, and memory pressure. The Store downloader restarts an interrupted file rather than resuming it byte-for-byte.
 - Check target behavior if focus or the caret changes during a pending Services request. The OS requestor route differs from the website edition's destination restoration.
-- Complete screenshots of the actual Store edition, declare content rights, provide review contact information, and complete the applicable EU trader declaration. Age rating, free pricing, worldwide availability, and the published App Privacy answer are saved. Account/contact details and remaining legal declarations must come from the owner.
+- Complete screenshots of the actual Store edition, declare content rights, provide review contact information, and complete the applicable EU trader declaration. Age rating, free pricing, availability in 174 territories excluding France, and the published App Privacy answer are saved. Account/contact details and remaining legal declarations must come from the owner.
 - Finish the bundled third-party privacy/API and security review. Source rebuilding and exact-version license coverage are verified; binary symbol inspection does not prove every runtime call path. App manifests declare own-container file metadata, elapsed-time timers, low-space checks, and app-only preferences.
 - Submit for Apple review and verify approval before advertising an App Store download.
 
