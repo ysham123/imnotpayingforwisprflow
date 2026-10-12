@@ -23,6 +23,8 @@
 
 Signing, notarization, packaging, and automated macOS checks pass. A complete first-time setup on a Mac that has never used Local Dictation is still unverified. The latest stable release remains [v2.0.1](https://github.com/ysham123/imnotpayingforwisprflow/releases/tag/v2.0.1); its download uses the earlier ad-hoc installation flow. Editor compatibility limits are recorded in [VALIDATION.md](docs/VALIDATION.md).
 
+A separate sandboxed [Mac App Store edition](AppStore/README.md) is in development. Its draft name is **Local Dictation: Private Voice**, and it uses macOS Services for insertion into participating editors. It is not available on the App Store yet. The website edition's download and Fn workflow continue to work as described below. Read the [privacy policy](PRIVACY.md).
+
 Fn / Globe is the default. You can choose a custom keyboard shortcut in **Settings… → Shortcuts → Change shortcut…**.
 
 Local Dictation is a native Mac app that turns speech into text. Choose **Clean** to remove fillers and accidental repetition and resolve clear spoken corrections, or **Verbatim** to use the speech recognizer’s transcript directly. Speech recognition and cleanup run on your Mac. The app downloads its models on first use and reuses them through updates.

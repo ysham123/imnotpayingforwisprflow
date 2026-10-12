@@ -1,0 +1,15 @@
+{
+  "name": "Local Dictation: Private Voice",
+  "subtitle": "On-device speech to text",
+  "version": "2.3.0",
+  "primaryCategory": "Productivity",
+  "promotionalText": "Private dictation for your Mac. Transcribe and clean up speech on your device, then insert it into supported editors through macOS Services.",
+  "description": "Turn your voice into text on your Mac. Local Dictation runs speech recognition and text cleanup on your device, with no account, API key, or cloud transcription fallback.\n\nDICTATE INTO SUPPORTED EDITORS\nClick a text field, then choose Services > Dictate with Local Dictation from the app's menu. Speak in the recording window and choose Stop & Insert. You can assign a Services keyboard shortcut in System Settings. Editors that support macOS text Services can receive the result directly; in other apps, record in Local Dictation and use Copy.\n\nCHOOSE YOUR RESULT\nUse Clean up wording for fillers, repetition, and clear spoken corrections, or Original transcript to keep the speech recognizer's wording. You can review and edit a transcript before copying it.\n\nYOUR MAC DOES THE PROCESSING\nRecord for up to five minutes. Choose your microphone in the app. Audio stays in memory, and no transcript history is saved. Text you place in another app follows that app's privacy practices.\n\nFIRST-TIME SETUP\nRequires an Apple Silicon Mac with macOS 14 or newer. Initial setup downloads about 3.4 GB of local models; keep 8 GB free. After setup, dictation can run offline. English is the supported language. Names, numbers, and ambiguous speech may still need editing.",
+  "keywords": "dictation,voice,speech,text,offline,private,local,transcription,writing,microphone",
+  "supportURL": "https://github.com/ysham123/imnotpayingforwisprflow/issues",
+  "marketingURL": "https://local-dictation-psi.vercel.app/",
+  "copyright": "2026 Yosef Shammout",
+  "reviewNotes": "This is the sandboxed macOS Services edition. It does not use the website edition's Fn shortcut, Accessibility API, installer, or global keyboard event tap.\n\nNo sign-in is required. Open the app and choose Download models for about 3.4 GB of verified weights. Speech and cleanup run locally using bundled sandbox-inheriting helpers. The cleanup server binds only to loopback.\n\nOnce setup is ready, click a text field in a Services-compatible editor such as TextEdit, choose Services > Dictate with Local Dictation from that editor's application menu, allow microphone access, speak, and choose Stop & Insert. For editors without text Services support, use the recording window and Copy.\n\nServices has a bounded timeout and returns no text after cancellation. Model downloads contain data only; the app never downloads executable code. Full first-run and editor acceptance checks must be completed before submitting this candidate.",
+  "submissionStatus": "draft-not-submitted",
+  "privacyPolicyURL": "https://local-dictation-psi.vercel.app/privacy.html"
+}

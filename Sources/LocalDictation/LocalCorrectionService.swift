@@ -7,14 +7,19 @@ final class LocalCorrectionService {
     private var process: Process?
     private var retiring: [Process] = []
     private let resources: URL
+    private let executable: URL
+    private let diagnosticOutput: FileHandle?
     private let models: URL
     private let serviceEndpoint: URL
     private let lease: CorrectionServiceLease
     private var startTask: Task<Void, Error>?
     private var operationGeneration: UInt64 = 0
 
-    init(resources: URL, models: URL? = nil, endpoint: URL = LocalCorrectionService.endpoint) {
+    init(resources: URL, models: URL? = nil, endpoint: URL = LocalCorrectionService.endpoint,
+         executableURL: URL? = nil, diagnosticOutput: FileHandle? = nil) {
         self.resources = resources; serviceEndpoint = endpoint
+        executable = executableURL ?? resources.appendingPathComponent("ollama")
+        self.diagnosticOutput = diagnosticOutput
         self.models = models ?? resources.appendingPathComponent("Models")
         lease = CorrectionServiceLease(endpoint: endpoint)
     }
@@ -83,7 +88,6 @@ final class LocalCorrectionService {
         // runner behind or create a second child competing for the same port.
         terminateOwnedProcess()
         try await drainRetiredProcesses(generation: generation)
-        let executable = resources.appendingPathComponent("ollama")
         let models = self.models.appendingPathComponent("ollama")
         guard FileManager.default.isExecutableFile(atPath: executable.path),
               FileManager.default.fileExists(atPath: models.path) else {
@@ -106,7 +110,7 @@ final class LocalCorrectionService {
         env["OLLAMA_NOPRUNE"] = "1"
         task.environment = env
         task.standardInput = FileHandle.nullDevice
-        task.standardOutput = FileHandle.nullDevice; task.standardError = FileHandle.nullDevice
+        task.standardOutput = diagnosticOutput ?? FileHandle.nullDevice; task.standardError = diagnosticOutput ?? FileHandle.nullDevice
         try task.run(); process = task; lease.activate(task)
         let deadline = ProcessInfo.processInfo.systemUptime + 12
         do {
