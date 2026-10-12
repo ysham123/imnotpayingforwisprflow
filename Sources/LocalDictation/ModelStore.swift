@@ -206,7 +206,13 @@ actor ModelStore {
     }
 
     private func requireSpace(for asset: Asset, partial: URL) throws {
+#if APP_STORE
+        // URLSession uses a new temporary download rather than curl's partial
+        // file. Reserve the entire asset even when an old partial exists.
+        let remaining = asset.bytes
+#else
         let remaining = max(0, asset.bytes - Self.size(of: partial))
+#endif
         let attrs = try FileManager.default.attributesOfFileSystem(forPath: paths.models.path)
         if let available = attrs[.systemFreeSize] as? NSNumber,
            available.int64Value < remaining + 128 * 1024 * 1024 {
@@ -219,7 +225,13 @@ actor ModelStore {
         for attempt in 0..<2 {
             do {
                 if let downloadOverride { try await downloadOverride(asset, partial) }
-                else { try await downloadCurl(asset, to: partial, completed: completed, total: total, progress: progress) }
+                else {
+#if APP_STORE
+                    throw RuntimeSetupError.message("The Store download service is unavailable. Relaunch the app and retry setup.")
+#else
+                    try await downloadCurl(asset, to: partial, completed: completed, total: total, progress: progress)
+#endif
+                }
                 return
             } catch DownloadFailure.resumeUnsupported {
                 // curl 33 explicitly means the server cannot satisfy the range.
@@ -234,6 +246,7 @@ actor ModelStore {
         }
     }
 
+#if !APP_STORE
     private func downloadCurl(_ asset: Asset, to partial: URL, completed: Int64, total: Int64,
                               progress: @escaping @MainActor (Progress) -> Void) async throws {
         guard let url = asset.url else { throw RuntimeSetupError.message("The model download URL is missing.") }
@@ -272,6 +285,7 @@ actor ModelStore {
             throw error
         }
     }
+#endif
 
     private static func copyCancellable(_ source: URL, to target: URL) throws {
         let input = open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)

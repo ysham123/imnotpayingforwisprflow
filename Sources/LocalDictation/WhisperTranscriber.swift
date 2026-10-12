@@ -36,10 +36,11 @@ final class WhisperTranscriber {
     private let startupTimeout: TimeInterval
     private let requestTimeoutOverride: TimeInterval?
 
-    init(resources: URL, models: URL? = nil, startupTimeout: TimeInterval = 90, requestTimeout: TimeInterval? = nil) {
+    init(resources: URL, models: URL? = nil, startupTimeout: TimeInterval = 90, requestTimeout: TimeInterval? = nil,
+         executableURL: URL? = nil) {
         self.startupTimeout = startupTimeout
         self.requestTimeoutOverride = requestTimeout
-        executable = resources.appendingPathComponent("whisper-worker")
+        executable = executableURL ?? resources.appendingPathComponent("whisper-worker")
         model = (models ?? resources.appendingPathComponent("Models")).appendingPathComponent("ggml-large-v3-turbo-q8_0.bin")
     }
 

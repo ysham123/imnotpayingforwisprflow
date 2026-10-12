@@ -1,0 +1,18 @@
+{
+  "whisper": {
+    "version": "1.8.3",
+    "url": "https://codeload.github.com/ggml-org/whisper.cpp/tar.gz/refs/tags/v1.8.3",
+    "sha256": "870ba21409cdf66697dc4db15ebdb13bc67037d76c7cc63756c81471d8f1731a"
+  },
+  "ollama": {
+    "version": "0.9.6",
+    "revision": "43107b15b9bcff51ef1c5391c273fd1a747f6d0a",
+    "url": "https://codeload.github.com/ollama/ollama/tar.gz/43107b15b9bcff51ef1c5391c273fd1a747f6d0a",
+    "sha256": "23ee0eb813a198eb7154d7aeff24cafd68a1eb5f681ac467334324999c72e359"
+  },
+  "go": {
+    "version": "1.24.5",
+    "url": "https://go.dev/dl/go1.24.5.darwin-arm64.tar.gz",
+    "sha256": "92d30a678f306c327c544758f2d2fa5515aa60abe9dba4ca35fbf9b8bfc53212"
+  }
+}

@@ -51,6 +51,8 @@ jobs:
           bash Scripts/test-native-vocabulary-worker.sh .test-build/whisper.cpp-1.8.3
       - name: External models and native install transaction
         run: bash Scripts/test-runtime-setup.sh
+      - name: Store HTTPS download cancellation and verification
+        run: bash Scripts/test-store-downloads.sh
       - name: Target inspection cancellation regressions
         run: bash Scripts/test-target-inspector.sh
       - name: Original destination restoration
