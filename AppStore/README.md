@@ -90,7 +90,7 @@ The test artifacts are under `.test-build/` and are not committed. Model clones 
 
 The window includes the existing app logo, microphone selection, refresh, a five-second microphone test independent of model loading, and a Clean/Original selector. The microphone test requests access only when clicked, displays the level meter, and discards its audio. Its physical-microphone acceptance remains pending.
 
-The Store description, keywords, support/marketing URLs, version, copyright, reviewer notes, and the three sandbox entitlement explanations are saved in App Store Connect. The public [privacy policy](https://local-dictation-psi.vercel.app/privacy.html) is deployed; the website's app download remains 2.2.1.
+The Store description, keywords, support/marketing URLs, version, copyright, reviewer notes, and the three sandbox entitlement explanations are saved in App Store Connect. Apple calculated and saved 4+ with regional equivalents. The price schedule is free ($0.00 USD base), and 175 countries or regions are configured as Available on App Release. Those settings do not publish the app or resolve any regional compliance obligations. The public [privacy policy](https://local-dictation-psi.vercel.app/privacy.html) is deployed; the website's app download remains 2.2.1.
 
 ## Remaining release gates
 
@@ -100,7 +100,7 @@ The Store description, keywords, support/marketing URLs, version, copyright, rev
 - Test a real microphone session and cancellation through Services, including permission denial/recovery and long dictation. Test Chrome, Safari, TextEdit, and common coding editors separately. Universal editor support is not claimed.
 - Verify fresh-container full-model downloads, pause/retry, low disk space, offline reuse, sleep/wake, and memory pressure. The Store downloader restarts an interrupted file rather than resuming it byte-for-byte.
 - Check target behavior if focus or the caret changes during a pending Services request. The OS requestor route differs from the website edition's destination restoration.
-- Complete screenshots of the actual Store edition, App Privacy answers, age rating, export compliance, pricing/availability, reviewer contact information, and any applicable EU trader declaration. Account or legal declarations must come from the owner.
+- Complete screenshots of the actual Store edition, App Privacy answers, content rights, export compliance, reviewer contact information, and any applicable EU trader declaration. Age rating, free pricing, and worldwide availability are saved. Account or legal declarations must come from the owner.
 - Finish the bundled third-party privacy/API and security review. Source rebuilding and exact-version license coverage are verified; binary symbol inspection does not prove every runtime call path. App manifests declare own-container file metadata, elapsed-time timers, low-space checks, and app-only preferences.
 - Submit for Apple review and verify approval before advertising an App Store download.
 
