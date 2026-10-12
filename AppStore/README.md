@@ -14,8 +14,8 @@ The owner chose to keep insertion into other apps and approved macOS Services as
 | Bundle identifier | dev.yosef.localdictation |
 | Team | 2563R7W8T6 |
 | SKU | local-dictation-macos |
-| Uploaded internal test version / build | 2.3.0 / 17; not yet visible in TestFlight |
-| Current signed candidate / build | 2.3.0 / 18; exported locally, not uploaded |
+| Uploaded builds | 2.3.0 / 17 (rejected) and 2.3.0 / 18 (listed in TestFlight; Missing Compliance) |
+| Current signed build | 2.3.0 / 18 |
 | Development bundle identifier | dev.yosef.localdictation.store.development |
 
 [App Store Connect draft](https://appstoreconnect.apple.com/apps/6821808111/distribution) is **Prepare for Submission**. Creating this record does not upload a build or publish the app.
@@ -70,10 +70,10 @@ The reproducible project generator is `Scripts/generate-store-project.py`. It us
 | Release Xcode archive | Passed with managed Apple Development signing |
 | Store package export | Passed; app uses Apple Distribution and package uses the Apple-issued Mac installer identity |
 | Distribution preflight | Passed signature, team/profile identity, sandbox, helper inheritance/team, and API checks |
-| App Store Connect upload | Xcode reported success for internal-only 2.3.0 (17); processing/availability must be verified in Connect |
-| Current Connect status | After renewed sign-in on October 12, TestFlight still showed No Builds; Apple processing feedback is needed |
+| App Store Connect uploads | Build 17 was rejected with Apple error 91109 for a `com.apple.quarantine` attribute in `whisper-worker`; build 18 is listed as Complete in App Store Connect Build Uploads |
+| Current Connect status | Build 18 is visible in TestFlight as Build 18, but its status is Missing Compliance. It cannot be tested until the owner completes Apple's export-compliance declaration. The version page has no attached build yet |
 | Source-rebuilt helpers | Build 18 uses verified Whisper 1.8.3 / Ollama 0.9.6 / Go 1.24.5 sources, with matching real helper dSYMs |
-| Build 18 archive / export | Passed managed signing, helper-symbol validation, Store export, and distribution preflight; not uploaded |
+| Build 18 archive / export / upload | Passed managed signing, helper-symbol validation, Store export, and distribution preflight; Xcode accepted upload without the missing-helper-symbol warnings seen on build 17 |
 | Store download transport | Seven live HTTPS checks passed: before/during-transfer cancellation, verified retry, offline reuse, wrong digest, HTTP rejection, oversized response |
 | Sandbox enforcement | Existing outside synthetic marker could not be read |
 | Development bundle preflight | Passed; not a distribution identity/profile check |
@@ -94,13 +94,13 @@ The Store description, keywords, support/marketing URLs, version, copyright, rev
 
 ## Remaining release gates
 
-- Xcode initially reported expired authentication, then refreshed its existing session. The signing team became available, a managed development identity was created, and automatic Store export succeeded. Store distribution signing uses Xcode's managed signing; private keys were not exported or placed in the repository.
-- Resolve why the successfully uploaded internal-only build 17 is not visible in TestFlight. Check Apple's processing email. Upload success does not prove processing, TestFlight availability, or App Review approval. Build 18 is exported locally but not uploaded while the earlier processing outcome remains unknown.
-- Build 18 resolves the missing helper symbols from build 17. Verify the next upload's symbol processing and TestFlight availability; matching local dSYMs do not prove Apple's processing result.
+- Xcode initially reported expired authentication, then refreshed its existing session. The signing team became available, a managed development identity was created, and Store export succeeded. Store distribution signing uses Xcode's managed signing; private keys were not exported or placed in the repository.
+- Build 17 failed with Apple error 91109: `whisper-worker` contained a `com.apple.quarantine` extended attribute, which Apple disallows in TestFlight/App Store packages. Build 18 is listed as Complete and appears in TestFlight, but Apple labels it Missing Compliance. The owner must complete the encryption/export-compliance declaration before TestFlight can enable the build; the declaration is not yet made.
+- Verify that Apple's processing attaches both helper symbol files for build 18; matching local dSYMs and the Complete upload status do not prove symbol availability.
 - Test a real microphone session and cancellation through Services, including permission denial/recovery and long dictation. Test Chrome, Safari, TextEdit, and common coding editors separately. Universal editor support is not claimed.
 - Verify fresh-container full-model downloads, pause/retry, low disk space, offline reuse, sleep/wake, and memory pressure. The Store downloader restarts an interrupted file rather than resuming it byte-for-byte.
 - Check target behavior if focus or the caret changes during a pending Services request. The OS requestor route differs from the website edition's destination restoration.
-- Complete screenshots of the actual Store edition, App Privacy answers, content rights, export compliance, reviewer contact information, and any applicable EU trader declaration. Age rating, free pricing, and worldwide availability are saved. Account or legal declarations must come from the owner.
+- Complete screenshots of the actual Store edition, publish the saved App Privacy answer, declare content rights and export compliance, provide review contact information, and complete the applicable EU trader declaration. Age rating, free pricing, and worldwide availability are saved. Account or legal declarations and publication attestation must come from the owner.
 - Finish the bundled third-party privacy/API and security review. Source rebuilding and exact-version license coverage are verified; binary symbol inspection does not prove every runtime call path. App manifests declare own-container file metadata, elapsed-time timers, low-space checks, and app-only preferences.
 - Submit for Apple review and verify approval before advertising an App Store download.
 
